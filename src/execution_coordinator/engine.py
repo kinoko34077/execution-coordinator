@@ -33,6 +33,10 @@ class StaleGeneration(CoordinationError):
     pass
 
 
+class LeaseExpired(CoordinationError):
+    pass
+
+
 class InvalidTransition(CoordinationError):
     pass
 
@@ -116,10 +120,20 @@ def _same_worker_self_review(active: Claim, *, task: str, role: Role, worker_id:
     )
 
 
-def _require_current(state: CoordinatorState, claim_id: str, generation: int) -> Claim:
+def _require_current(
+    state: CoordinatorState,
+    claim_id: str,
+    generation: int,
+    *,
+    now: datetime,
+) -> Claim:
     current = state.claims.get(claim_id)
     if current is None or current.generation != generation:
         raise StaleGeneration(f"claim generation is not current: {claim_id}@{generation}")
+
+    protected_wait = current.state is ExecutionState.WAITING and bool(current.evidence_ref)
+    if not protected_wait and current.lease_until <= _utc(now):
+        raise LeaseExpired(f"claim lease has expired: {claim_id}@{generation}")
     return current
 
 
@@ -218,7 +232,7 @@ def _update_claim(
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
     if replay is not None:
         return replay
-    current = _require_current(state, claim_id, generation)
+    current = _require_current(state, claim_id, generation, now=now)
     updated = updater(current, now)
     claims = dict(state.claims)
     claims[claim_id] = updated
@@ -353,7 +367,7 @@ def _terminal(
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
     if replay is not None:
         return replay
-    current = _require_current(state, claim_id, generation)
+    current = _require_current(state, claim_id, generation, now=now)
     claims = dict(state.claims)
     del claims[claim_id]
     event = Event(kind, claim_id, current.task, current.role, generation, now, reason)
