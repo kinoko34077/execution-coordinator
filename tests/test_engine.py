@@ -14,6 +14,7 @@ from execution_coordinator.engine import (
     progress,
     release,
     renew,
+    resume,
     takeover,
     wait,
 )
@@ -247,7 +248,46 @@ class ClaimLeaseEngineTests(unittest.TestCase):
                 idempotency_key="stale-ack",
             )
 
-    def test_wait_with_evidence_is_not_expired_as_lost_execution(self) -> None:
+    def test_waiting_claim_expires_and_can_be_taken_over(self) -> None:
+        claimed = claim(
+            CoordinatorState.empty(),
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-a",
+            conflict_keys=("component:example:parser",),
+            now=T0,
+            idempotency_key="claim",
+        )
+        waiting = wait(
+            claimed.state,
+            claim_id=claimed.claim_id,
+            generation=claimed.generation,
+            reason=WaitReason.CI,
+            evidence_ref="pr#9/checks",
+            now=T0 + timedelta(minutes=2),
+            idempotency_key="wait",
+        )
+
+        expired = expire(
+            waiting.state,
+            now=T0 + timedelta(minutes=16),
+            idempotency_key="expire-waiting",
+        )
+        self.assertNotIn(claimed.claim_id, expired.state.claims)
+        self.assertEqual("EXPIRED", expired.events[0].kind)
+
+        replacement = takeover(
+            expired.state,
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-b",
+            conflict_keys=("component:example:parser",),
+            now=T0 + timedelta(minutes=16),
+            idempotency_key="takeover-waiting",
+        )
+        self.assertEqual(claimed.generation + 1, replacement.generation)
+
+    def test_waiting_claim_can_resume_before_expiry(self) -> None:
         claimed = claim(
             CoordinatorState.empty(),
             task="kinoko34077/example#1",
@@ -266,16 +306,46 @@ class ClaimLeaseEngineTests(unittest.TestCase):
             now=T0 + timedelta(minutes=2),
             idempotency_key="wait",
         )
-        current = waiting.state.claims[claimed.claim_id]
-        self.assertEqual(ExecutionState.WAITING, current.state)
-        self.assertEqual(WaitReason.CI, current.wait_reason)
-
-        after_expiry_scan = expire(
+        resumed = resume(
             waiting.state,
-            now=T0 + timedelta(minutes=30),
-            idempotency_key="expire-scan",
+            claim_id=claimed.claim_id,
+            generation=claimed.generation,
+            now=T0 + timedelta(minutes=3),
+            idempotency_key="resume",
         )
-        self.assertIn(claimed.claim_id, after_expiry_scan.state.claims)
+        current = resumed.state.claims[claimed.claim_id]
+        self.assertEqual(ExecutionState.RUNNING, current.state)
+        self.assertIsNone(current.wait_reason)
+        self.assertIsNone(current.evidence_ref)
+        self.assertEqual(T0 + timedelta(minutes=3), current.heartbeat_at)
+
+    def test_expired_waiting_claim_cannot_resume(self) -> None:
+        claimed = claim(
+            CoordinatorState.empty(),
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-a",
+            conflict_keys=(),
+            now=T0,
+            idempotency_key="claim",
+        )
+        waiting = wait(
+            claimed.state,
+            claim_id=claimed.claim_id,
+            generation=claimed.generation,
+            reason=WaitReason.CI,
+            evidence_ref="pr#9/checks",
+            now=T0 + timedelta(minutes=2),
+            idempotency_key="wait",
+        )
+        with self.assertRaises(LeaseExpired):
+            resume(
+                waiting.state,
+                claim_id=claimed.claim_id,
+                generation=claimed.generation,
+                now=T0 + timedelta(minutes=16),
+                idempotency_key="late-resume",
+            )
 
     def test_idempotent_retry_replays_same_result_but_mismatched_payload_fails(self) -> None:
         first = claim(
