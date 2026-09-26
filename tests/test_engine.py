@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from execution_coordinator.engine import (
     ClaimConflict,
     IdempotencyConflict,
+    LeaseExpired,
     StaleGeneration,
     acknowledge,
     claim,
@@ -141,6 +142,49 @@ class ClaimLeaseEngineTests(unittest.TestCase):
                 generation=claimed.generation - 1,
                 now=T0 + timedelta(minutes=6),
                 idempotency_key="stale-renew",
+            )
+
+    def test_expired_running_claim_cannot_be_revived_by_late_continuation(self) -> None:
+        claimed = claim(
+            CoordinatorState.empty(),
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-a",
+            conflict_keys=(),
+            now=T0,
+            idempotency_key="claim",
+        )
+        running = acknowledge(
+            claimed.state,
+            claim_id=claimed.claim_id,
+            generation=claimed.generation,
+            now=T0 + timedelta(minutes=1),
+            idempotency_key="ack",
+        )
+
+        late = T0 + timedelta(minutes=16)
+        for operation, key in (
+            (renew, "late-renew"),
+            (progress, "late-progress"),
+        ):
+            with self.assertRaises(LeaseExpired):
+                operation(
+                    running.state,
+                    claim_id=claimed.claim_id,
+                    generation=claimed.generation,
+                    now=late,
+                    idempotency_key=key,
+                )
+
+        with self.assertRaises(LeaseExpired):
+            wait(
+                running.state,
+                claim_id=claimed.claim_id,
+                generation=claimed.generation,
+                reason=WaitReason.CI,
+                evidence_ref="pr#9/checks",
+                now=late,
+                idempotency_key="late-wait",
             )
 
     def test_progress_does_not_replace_heartbeat(self) -> None:
