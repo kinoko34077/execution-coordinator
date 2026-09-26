@@ -6,7 +6,7 @@
 
 `execution-coordinator` is the separate runtime implementation boundary for devflow Execution Coordination Protocol v1.
 
-Current implementation work is owned by Issue #1 and Draft/Review PR #2 on branch `work/issue-1-v01-core`.
+Current implementation work is owned by Issue #1 and PR #2 on branch `work/issue-1-v01-core`.
 
 Cross-repository authority remains:
 - devflow Work Order #105;
@@ -22,6 +22,7 @@ Cross-repository authority remains:
 - independent non-conflicting claims;
 - logical conflict-key rejection for incompatible ownership;
 - reviewer compatibility with implementation ownership for independent inspection;
+- same worker cannot hold implementer and independent reviewer authority for the same task;
 - deterministic generation advancement by task/role boundary;
 - explicit timezone-aware time input;
 - default 15-minute lease;
@@ -30,7 +31,17 @@ Cross-repository authority remains:
 - stale-generation fencing;
 - lease expiry and higher-generation takeover;
 - idempotency-key replay with mismatched-payload rejection;
+- retry wall-clock time is excluded from logical idempotency identity;
 - release/failure/expiry lifecycle events.
+
+### Bounded idempotency retention
+
+- current snapshot retains at most 128 idempotency records;
+- high-frequency non-event records such as renew/progress/wait are evicted before lifecycle authority records when possible;
+- the newest mutation record is retained by the write that creates it;
+- if the retained set contains only lifecycle authority records, the oldest record is evicted to preserve the hard cap;
+- idempotency insertion/retention order is preserved through Issue snapshot serialize/parse cycles;
+- an oversized idempotency map in an externally modified snapshot fails closed.
 
 ### Strict system-Issue snapshot
 
@@ -88,7 +99,8 @@ Contract:
 - permissions limited to `contents: read` and `issues: write`;
 - current system-state Issue is #3;
 - external checkout/setup-python Actions are full-SHA pinned;
-- untrusted dispatch payload is passed through environment variables rather than interpolated directly into shell source.
+- untrusted dispatch payload is passed through environment variables rather than interpolated directly into shell source;
+- authority-changing mutation job is restricted to `refs/heads/main`, so stale/non-default workflow refs cannot mutate Issue #3.
 
 ## TDD / verification evidence
 
@@ -114,6 +126,17 @@ Contract:
 - RED run `36257478480`: existing 28 tests passed; four workflow-contract tests failed only because `mutate-state.yml` was absent;
 - workflow added at `b46cb58eefb005126f0a40a7bef924d75e13e3b7`;
 - exact-head run `36257604849`: full suite + workflow contract + compile check PASS.
+
+### Changed-scope review hardening
+
+- RED run `36257798498` demonstrated three independent defects before fixes:
+  - transport retry time incorrectly changed idempotency identity;
+  - same worker could claim implementer and reviewer authority for one task;
+  - mutation workflow lacked a main-ref execution guard;
+- these were corrected before review readiness;
+- RED run `36257955287` then exposed unbounded high-frequency idempotency retention;
+- bounded retention + snapshot-order preservation were added;
+- exact-head run `36258281283` on `07f413e59c07db03cd9633db793a8d2147b965a4`: full unit suite + workflow contract + compile check PASS before final documentation reconciliation.
 
 ## Current verification boundary
 
@@ -146,4 +169,4 @@ Do not represent v0.1 as operationally accepted until:
 
 ## Next action
 
-`Complete changed-scope review of PR #2 -> obtain independent formal Review on exact head -> merge only after protocol PR #108 acceptance -> run one bounded claim/release workflow smoke on merged main -> reconcile Issue #1 / Current State / devflow Control #107.`
+`Run exact-head CI after final documentation reconciliation -> mark PR #2 ready for independent formal Review -> obtain independent Review for PR #2 and devflow PR #108 -> merge only after both review boundaries are satisfied -> run one bounded claim/release workflow smoke on merged main -> reconcile Issue #1 / Current State / devflow Control #107.`
