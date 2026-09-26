@@ -15,6 +15,8 @@ from .model import (
     MutationResult,
     Role,
     WaitReason,
+    roles_can_share_conflict_key,
+    same_worker_role_conflict,
 )
 
 
@@ -109,14 +111,15 @@ def _record(
 
 
 def _roles_compatible(left: Role, right: Role) -> bool:
-    return Role.REVIEWER in (left, right)
+    return roles_can_share_conflict_key(left, right)
 
 
 def _same_worker_self_review(active: Claim, *, task: str, role: Role, worker_id: str) -> bool:
-    return (
-        active.task == task
-        and active.worker_id == worker_id
-        and {active.role, role} == {Role.IMPLEMENTER, Role.REVIEWER}
+    return same_worker_role_conflict(
+        active,
+        task=task,
+        role=role,
+        worker_id=worker_id,
     )
 
 
