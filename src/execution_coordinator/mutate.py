@@ -52,20 +52,21 @@ def _apply_to_state(
     idempotency_key: str,
     now: datetime,
 ) -> MutationResult:
-    common_claim = {
-        "task": str(_required(payload, "task")),
-        "role": Role(str(_required(payload, "role"))),
-        "worker_id": str(_required(payload, "worker_id")),
-        "conflict_keys": tuple(str(item) for item in payload.get("conflict_keys", [])),
-        "now": now,
-        "idempotency_key": idempotency_key,
-        "base_sha": str(payload["base_sha"]) if payload.get("base_sha") is not None else None,
-        "branch": str(payload["branch"]) if payload.get("branch") is not None else None,
-    }
-    if operation == "claim":
-        return claim(state, **common_claim)
-    if operation == "takeover":
+    if operation in {"claim", "takeover"}:
+        common_claim = {
+            "task": str(_required(payload, "task")),
+            "role": Role(str(_required(payload, "role"))),
+            "worker_id": str(_required(payload, "worker_id")),
+            "conflict_keys": tuple(str(item) for item in payload.get("conflict_keys", [])),
+            "now": now,
+            "idempotency_key": idempotency_key,
+            "base_sha": str(payload["base_sha"]) if payload.get("base_sha") is not None else None,
+            "branch": str(payload["branch"]) if payload.get("branch") is not None else None,
+        }
+        if operation == "claim":
+            return claim(state, **common_claim)
         return takeover(state, **common_claim)
+
     if operation == "expire":
         return expire(state, now=now, idempotency_key=idempotency_key)
 
