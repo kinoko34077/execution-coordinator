@@ -108,6 +108,14 @@ def _roles_compatible(left: Role, right: Role) -> bool:
     return Role.REVIEWER in (left, right)
 
 
+def _same_worker_self_review(active: Claim, *, task: str, role: Role, worker_id: str) -> bool:
+    return (
+        active.task == task
+        and active.worker_id == worker_id
+        and {active.role, role} == {Role.IMPLEMENTER, Role.REVIEWER}
+    )
+
+
 def _require_current(state: CoordinatorState, claim_id: str, generation: int) -> Claim:
     current = state.claims.get(claim_id)
     if current is None or current.generation != generation:
@@ -130,12 +138,14 @@ def claim(
 ) -> MutationResult:
     now = _utc(now)
     keys = tuple(sorted(set(conflict_keys)))
+    # Runtime wall-clock time is intentionally excluded from the request
+    # fingerprint. An Actions/transport retry with the same logical request and
+    # idempotency key must replay the original result even when retried later.
     payload = {
         "task": task,
         "role": role.value,
         "worker_id": worker_id,
         "conflict_keys": list(keys),
-        "now": _iso(now),
         "base_sha": base_sha,
         "branch": branch,
         "lease_minutes": lease_minutes,
@@ -148,6 +158,8 @@ def claim(
     for active in state.claims.values():
         if active.task == task and active.role == role:
             raise ClaimConflict(f"task/role already claimed: {task} {role.value}")
+        if _same_worker_self_review(active, task=task, role=role, worker_id=worker_id):
+            raise ClaimConflict("same worker cannot hold implementer and independent reviewer roles for one task")
         if set(active.conflict_keys).intersection(keys) and not _roles_compatible(active.role, role):
             raise ClaimConflict(f"conflict key already owned by {active.claim_id}")
 
@@ -200,7 +212,8 @@ def _update_claim(
     updater,
 ) -> MutationResult:
     now = _utc(now)
-    full_payload = {**payload, "claim_id": claim_id, "generation": generation, "now": _iso(now)}
+    # `now` is execution metadata, not logical request identity.
+    full_payload = {**payload, "claim_id": claim_id, "generation": generation}
     fingerprint = _fingerprint(operation, full_payload)
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
     if replay is not None:
@@ -334,7 +347,6 @@ def _terminal(
     payload = {
         "claim_id": claim_id,
         "generation": generation,
-        "now": _iso(now),
         "reason": reason,
     }
     fingerprint = _fingerprint(kind.lower(), payload)
@@ -402,7 +414,7 @@ def expire(
     idempotency_key: str,
 ) -> MutationResult:
     now = _utc(now)
-    fingerprint = _fingerprint("expire", {"now": _iso(now)})
+    fingerprint = _fingerprint("expire", {})
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
     if replay is not None:
         return replay
