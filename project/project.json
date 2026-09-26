@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "project": {
+    "name": "execution-coordinator",
+    "repository": "kinoko34077/execution-coordinator",
+    "purpose": "Multi-agent execution coordination runtime",
+    "status": "BOOTSTRAP"
+  },
+  "authority": {
+    "protocol": "kinoko34077/devflow",
+    "runtime": "kinoko34077/execution-coordinator",
+    "observer": "kinoko34077/kinotch-repo-monitor"
+  },
+  "entry_points": [
+    "AGENTS.md",
+    "project/docs/INDEX.md",
+    "project/docs/CURRENT_STATE.md"
+  ]
+}
