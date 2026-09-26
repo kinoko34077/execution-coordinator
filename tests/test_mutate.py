@@ -4,7 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from execution_coordinator.github_state import GitHubApiError
-from execution_coordinator.model import CoordinatorState
+from execution_coordinator.model import CoordinatorState, ExecutionState
 from execution_coordinator.mutate import apply_mutation
 from execution_coordinator.snapshot import parse_issue_body, render_issue_body
 
@@ -112,6 +112,46 @@ class MutationTests(unittest.TestCase):
             now=T0 + timedelta(minutes=1),
         )
         self.assertEqual([], store.comments)
+
+    def test_resume_updates_waiting_claim_without_lifecycle_comment(self) -> None:
+        store = _FakeStore()
+        claimed = apply_mutation(
+            store,
+            operation="claim",
+            payload={
+                "task": "kinoko34077/example#1",
+                "role": "implementer",
+                "worker_id": "worker-a",
+                "conflict_keys": [],
+            },
+            idempotency_key="claim-1",
+            now=T0,
+        )
+        apply_mutation(
+            store,
+            operation="wait",
+            payload={
+                "claim_id": claimed.claim_id,
+                "generation": claimed.generation,
+                "reason": "CI",
+                "evidence_ref": "example#2/checks",
+            },
+            idempotency_key="wait-1",
+            now=T0 + timedelta(minutes=1),
+        )
+        store.comments.clear()
+        apply_mutation(
+            store,
+            operation="resume",
+            payload={"claim_id": claimed.claim_id, "generation": claimed.generation},
+            idempotency_key="resume-1",
+            now=T0 + timedelta(minutes=2),
+        )
+        self.assertEqual([], store.comments)
+        current = parse_issue_body(store.body).claims[claimed.claim_id]
+        self.assertEqual(ExecutionState.RUNNING, current.state)
+        self.assertIsNone(current.wait_reason)
+        self.assertIsNone(current.evidence_ref)
 
     def test_release_emits_durable_comment(self) -> None:
         store = _FakeStore()
