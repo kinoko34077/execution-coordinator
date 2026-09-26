@@ -118,11 +118,35 @@ def _claim_from_data(data: object) -> Claim:
     return claim
 
 
+def _validate_authority_invariants(
+    claims: dict[str, Claim],
+    generations: dict[str, int],
+) -> None:
+    seen_boundaries: set[str] = set()
+    for claim in claims.values():
+        boundary = f"{claim.task}|{claim.role.value}"
+        if boundary in seen_boundaries:
+            raise SnapshotError("multiple active claims share one task/role boundary")
+        seen_boundaries.add(boundary)
+
+        if generations.get(boundary) != claim.generation:
+            raise SnapshotError("active claim generation does not match generation table")
+
+        if claim.state is ExecutionState.WAITING:
+            if claim.wait_reason is None:
+                raise SnapshotError("waiting claim requires wait_reason")
+            if not isinstance(claim.evidence_ref, str) or not claim.evidence_ref.strip():
+                raise SnapshotError("waiting claim requires non-empty evidence_ref")
+        elif claim.wait_reason is not None or claim.evidence_ref is not None:
+            raise SnapshotError("non-waiting claim must not carry wait metadata")
+
+
 def state_to_data(state: CoordinatorState) -> dict[str, Any]:
     if state.schema_version != 1:
         raise SnapshotError(f"unsupported schema version: {state.schema_version}")
     if len(state.idempotency) > MAX_IDEMPOTENCY_RECORDS:
         raise SnapshotError("idempotency retention exceeds configured maximum")
+    _validate_authority_invariants(state.claims, state.generations)
     return {
         "schema_version": 1,
         "claims": {
@@ -177,6 +201,8 @@ def state_from_data(data: object) -> CoordinatorState:
         if generation < 0:
             raise SnapshotError("generation must not be negative")
         generations[str(key)] = generation
+
+    _validate_authority_invariants(claims, generations)
 
     idempotency: dict[str, IdempotencyRecord] = {}
     for key, raw in idempotency_raw.items():
