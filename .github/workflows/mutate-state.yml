@@ -1,0 +1,48 @@
+name: mutate execution state
+
+on:
+  workflow_dispatch:
+    inputs:
+      operation:
+        description: Mutation operation
+        required: true
+        type: string
+      payload_json:
+        description: JSON object payload
+        required: true
+        type: string
+      idempotency_key:
+        description: Stable idempotency key for this logical mutation
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: execution-coordinator-state-mutation
+  queue: max
+
+jobs:
+  mutate:
+    runs-on: ubuntu-latest
+    env:
+      PYTHONPATH: src
+      STATE_ISSUE_NUMBER: "3"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.11'
+      - name: Apply serialized mutation
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MUTATION_OPERATION: ${{ inputs.operation }}
+          MUTATION_PAYLOAD_JSON: ${{ inputs.payload_json }}
+          MUTATION_IDEMPOTENCY_KEY: ${{ inputs.idempotency_key }}
+        run: |
+          python -m execution_coordinator.mutate \
+            --operation "$MUTATION_OPERATION" \
+            --payload-json "$MUTATION_PAYLOAD_JSON" \
+            --idempotency-key "$MUTATION_IDEMPOTENCY_KEY"
