@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .model import (
+    MAX_IDEMPOTENCY_RECORDS,
     Claim,
     CoordinatorState,
     Event,
@@ -120,6 +121,8 @@ def _claim_from_data(data: object) -> Claim:
 def state_to_data(state: CoordinatorState) -> dict[str, Any]:
     if state.schema_version != 1:
         raise SnapshotError(f"unsupported schema version: {state.schema_version}")
+    if len(state.idempotency) > MAX_IDEMPOTENCY_RECORDS:
+        raise SnapshotError("idempotency retention exceeds configured maximum")
     return {
         "schema_version": 1,
         "claims": {
@@ -127,6 +130,9 @@ def state_to_data(state: CoordinatorState) -> dict[str, Any]:
             for claim_id, claim in sorted(state.claims.items())
         },
         "generations": dict(sorted(state.generations.items())),
+        # Retention order is insertion order. Do not sort this mapping: each
+        # Actions mutation reloads the Issue snapshot before applying the next
+        # mutation, so preserving order is required for deterministic eviction.
         "idempotency": {
             key: {
                 "fingerprint": record.fingerprint,
@@ -134,7 +140,7 @@ def state_to_data(state: CoordinatorState) -> dict[str, Any]:
                 "generation": record.generation,
                 "events": [_event_to_data(event) for event in record.events],
             }
-            for key, record in sorted(state.idempotency.items())
+            for key, record in state.idempotency.items()
         },
     }
 
@@ -152,6 +158,8 @@ def state_from_data(data: object) -> CoordinatorState:
         raise SnapshotError("snapshot is missing required fields") from exc
     if not isinstance(claims_raw, dict) or not isinstance(generations_raw, dict) or not isinstance(idempotency_raw, dict):
         raise SnapshotError("snapshot maps must be objects")
+    if len(idempotency_raw) > MAX_IDEMPOTENCY_RECORDS:
+        raise SnapshotError("idempotency retention exceeds configured maximum")
 
     claims: dict[str, Claim] = {}
     for claim_id, raw in claims_raw.items():
@@ -225,7 +233,7 @@ def render_issue_body(existing_body: str, state: CoordinatorState) -> str:
     payload = json.dumps(
         state_to_data(state),
         ensure_ascii=False,
-        sort_keys=True,
+        sort_keys=False,
         indent=2,
     )
     block = f"{BEGIN_MARKER}\n{payload}\n{END_MARKER}"
