@@ -40,6 +40,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("--payload-json", text)
         self.assertIn("--idempotency-key", text)
 
+    def test_authority_mutation_job_runs_only_from_main_ref(self) -> None:
+        text = MUTATION_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("if: github.ref == 'refs/heads/main'", text)
+
 
 if __name__ == "__main__":
     unittest.main()
