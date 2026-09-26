@@ -4,7 +4,7 @@
     "name": "execution-coordinator",
     "repository": "kinoko34077/execution-coordinator",
     "purpose": "Multi-agent execution coordination runtime",
-    "status": "BOOTSTRAP"
+    "status": "AWAITING_REVIEW"
   },
   "authority": {
     "protocol": "kinoko34077/devflow",
