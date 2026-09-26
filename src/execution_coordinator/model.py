@@ -63,6 +63,28 @@ class Claim:
     branch: str | None = None
 
 
+def roles_can_share_conflict_key(left: Role, right: Role) -> bool:
+    """Return whether these role claims may overlap one logical conflict key."""
+
+    return Role.REVIEWER in (left, right)
+
+
+def same_worker_role_conflict(
+    active: Claim,
+    *,
+    task: str,
+    role: Role,
+    worker_id: str,
+) -> bool:
+    """Reject one logical worker acting as implementer and reviewer on a task."""
+
+    return (
+        active.task == task
+        and active.worker_id == worker_id
+        and {active.role, role} == {Role.IMPLEMENTER, Role.REVIEWER}
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class IdempotencyRecord:
     fingerprint: str
