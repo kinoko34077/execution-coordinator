@@ -6,6 +6,9 @@ from enum import StrEnum
 from typing import Any
 
 
+MAX_IDEMPOTENCY_RECORDS = 128
+
+
 class Role(StrEnum):
     IMPLEMENTER = "implementer"
     REVIEWER = "reviewer"
@@ -68,6 +71,38 @@ class IdempotencyRecord:
     events: tuple[Event, ...] = ()
 
 
+def _bounded_idempotency(
+    records: dict[str, IdempotencyRecord],
+) -> dict[str, IdempotencyRecord]:
+    """Bound retry memory while preferring durable authority-boundary records.
+
+    Dict insertion order is the retention order. The newest mutation key is
+    never evicted by the same write. Non-event records (renew/progress/wait)
+    are discarded before significant authority-boundary records whenever
+    possible. If the map is entirely authority-boundary records, the oldest
+    record is evicted so the state remains strictly bounded.
+    """
+
+    bounded = dict(records)
+    while len(bounded) > MAX_IDEMPOTENCY_RECORDS:
+        keys = list(bounded)
+        newest_key = keys[-1]
+        eviction_key = next(
+            (
+                key
+                for key in keys[:-1]
+                if not bounded[key].events
+            ),
+            None,
+        )
+        if eviction_key is None:
+            eviction_key = keys[0]
+            if eviction_key == newest_key:
+                break
+        del bounded[eviction_key]
+    return bounded
+
+
 @dataclass(frozen=True, slots=True)
 class CoordinatorState:
     schema_version: int = 1
@@ -86,11 +121,16 @@ class CoordinatorState:
         generations: dict[str, int] | None = None,
         idempotency: dict[str, IdempotencyRecord] | None = None,
     ) -> "CoordinatorState":
+        next_idempotency = (
+            dict(self.idempotency)
+            if idempotency is None
+            else _bounded_idempotency(idempotency)
+        )
         return CoordinatorState(
             schema_version=self.schema_version,
             claims=dict(self.claims if claims is None else claims),
             generations=dict(self.generations if generations is None else generations),
-            idempotency=dict(self.idempotency if idempotency is None else idempotency),
+            idempotency=next_idempotency,
         )
 
 
