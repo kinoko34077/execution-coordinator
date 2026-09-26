@@ -130,9 +130,7 @@ def _require_current(
     current = state.claims.get(claim_id)
     if current is None or current.generation != generation:
         raise StaleGeneration(f"claim generation is not current: {claim_id}@{generation}")
-
-    protected_wait = current.state is ExecutionState.WAITING and bool(current.evidence_ref)
-    if not protected_wait and current.lease_until <= _utc(now):
+    if current.lease_until <= _utc(now):
         raise LeaseExpired(f"claim lease has expired: {claim_id}@{generation}")
     return current
 
@@ -152,9 +150,6 @@ def claim(
 ) -> MutationResult:
     now = _utc(now)
     keys = tuple(sorted(set(conflict_keys)))
-    # Runtime wall-clock time is intentionally excluded from the request
-    # fingerprint. An Actions/transport retry with the same logical request and
-    # idempotency key must replay the original result even when retried later.
     payload = {
         "task": task,
         "role": role.value,
@@ -226,7 +221,6 @@ def _update_claim(
     updater,
 ) -> MutationResult:
     now = _utc(now)
-    # `now` is execution metadata, not logical request identity.
     full_payload = {**payload, "claim_id": claim_id, "generation": generation}
     fingerprint = _fingerprint(operation, full_payload)
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
@@ -347,6 +341,37 @@ def wait(
     )
 
 
+def resume(
+    state: CoordinatorState,
+    *,
+    claim_id: str,
+    generation: int,
+    now: datetime,
+    idempotency_key: str,
+) -> MutationResult:
+    def updater(current: Claim, at: datetime) -> Claim:
+        if current.state is not ExecutionState.WAITING:
+            raise InvalidTransition("resume requires WAITING state")
+        return replace(
+            current,
+            state=ExecutionState.RUNNING,
+            wait_reason=None,
+            evidence_ref=None,
+            heartbeat_at=at,
+        )
+
+    return _update_claim(
+        state,
+        claim_id=claim_id,
+        generation=generation,
+        now=now,
+        idempotency_key=idempotency_key,
+        operation="resume",
+        payload={},
+        updater=updater,
+    )
+
+
 def _terminal(
     state: CoordinatorState,
     *,
@@ -435,8 +460,7 @@ def expire(
     claims = dict(state.claims)
     events: list[Event] = []
     for claim_id, current in list(claims.items()):
-        protected_wait = current.state is ExecutionState.WAITING and bool(current.evidence_ref)
-        if current.lease_until <= now and not protected_wait:
+        if current.lease_until <= now:
             del claims[claim_id]
             events.append(
                 Event("EXPIRED", claim_id, current.task, current.role, current.generation, now)
