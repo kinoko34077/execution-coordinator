@@ -3,7 +3,13 @@ from __future__ import annotations
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from execution_coordinator.engine import ClaimConflict, claim, release
+from execution_coordinator.engine import (
+    MAX_IDEMPOTENCY_RECORDS,
+    ClaimConflict,
+    claim,
+    progress,
+    release,
+)
 from execution_coordinator.model import CoordinatorState, Role
 
 
@@ -71,6 +77,30 @@ class ReviewHardeningTests(unittest.TestCase):
                 now=T0,
                 idempotency_key="self-review",
             )
+
+    def test_high_frequency_progress_does_not_grow_idempotency_without_bound(self) -> None:
+        claimed = claim(
+            CoordinatorState.empty(),
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-a",
+            conflict_keys=(),
+            now=T0,
+            idempotency_key="claim-authority-event",
+        )
+        state = claimed.state
+        for index in range(MAX_IDEMPOTENCY_RECORDS + 40):
+            state = progress(
+                state,
+                claim_id=claimed.claim_id,
+                generation=claimed.generation,
+                now=T0 + timedelta(seconds=index + 1),
+                idempotency_key=f"progress-{index:04d}",
+            ).state
+
+        self.assertLessEqual(len(state.idempotency), MAX_IDEMPOTENCY_RECORDS)
+        self.assertIn("claim-authority-event", state.idempotency)
+        self.assertNotIn("progress-0000", state.idempotency)
 
 
 if __name__ == "__main__":
