@@ -4,13 +4,12 @@ import unittest
 from datetime import datetime, timedelta, timezone
 
 from execution_coordinator.engine import (
-    MAX_IDEMPOTENCY_RECORDS,
     ClaimConflict,
     claim,
     progress,
     release,
 )
-from execution_coordinator.model import CoordinatorState, Role
+from execution_coordinator.model import MAX_IDEMPOTENCY_RECORDS, CoordinatorState, Role
 from execution_coordinator.snapshot import parse_issue_body, render_issue_body
 
 
