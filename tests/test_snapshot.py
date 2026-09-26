@@ -42,6 +42,14 @@ class SnapshotCodecTests(unittest.TestCase):
             idempotency_key="wait-1",
         ).state
 
+    def _payload(self) -> dict[str, object]:
+        rendered = render_issue_body("header\n", self._state())
+        payload_text = rendered.split(BEGIN_MARKER, 1)[1].split(END_MARKER, 1)[0].strip()
+        return json.loads(payload_text)
+
+    def _body(self, payload: dict[str, object]) -> str:
+        return f"human\n{BEGIN_MARKER}\n{json.dumps(payload)}\n{END_MARKER}\n"
+
     def test_absent_marker_initializes_empty_state(self) -> None:
         body = "# Execution Coordination State\n\nHuman-readable warning only.\n"
         state = parse_issue_body(body)
@@ -60,9 +68,7 @@ class SnapshotCodecTests(unittest.TestCase):
         self.assertEqual(state, parse_issue_body(first))
 
     def test_serialized_timestamps_are_utc_z_only(self) -> None:
-        rendered = render_issue_body("header\n", self._state())
-        payload_text = rendered.split(BEGIN_MARKER, 1)[1].split(END_MARKER, 1)[0].strip()
-        payload = json.loads(payload_text)
+        payload = self._payload()
         only_claim = next(iter(payload["claims"].values()))
 
         self.assertTrue(only_claim["claimed_at"].endswith("Z"))
@@ -98,6 +104,36 @@ class SnapshotCodecTests(unittest.TestCase):
         body = f"human\n{BEGIN_MARKER}\n{{}}\n"
         with self.assertRaises(SnapshotError):
             parse_issue_body(body)
+
+    def test_active_claim_generation_must_match_generation_table(self) -> None:
+        payload = self._payload()
+        boundary = next(iter(payload["generations"]))
+        payload["generations"][boundary] += 1
+        with self.assertRaises(SnapshotError):
+            parse_issue_body(self._body(payload))
+
+    def test_duplicate_active_task_role_boundary_fails_closed(self) -> None:
+        payload = self._payload()
+        claim_id, claim_data = next(iter(payload["claims"].items()))
+        duplicate = dict(claim_data)
+        duplicate["claim_id"] = f"{claim_id}-duplicate"
+        payload["claims"][duplicate["claim_id"]] = duplicate
+        with self.assertRaises(SnapshotError):
+            parse_issue_body(self._body(payload))
+
+    def test_waiting_claim_requires_reason_and_evidence(self) -> None:
+        payload = self._payload()
+        claim_data = next(iter(payload["claims"].values()))
+        claim_data["evidence_ref"] = None
+        with self.assertRaises(SnapshotError):
+            parse_issue_body(self._body(payload))
+
+    def test_non_waiting_claim_must_not_carry_wait_metadata(self) -> None:
+        payload = self._payload()
+        claim_data = next(iter(payload["claims"].values()))
+        claim_data["state"] = "RUNNING"
+        with self.assertRaises(SnapshotError):
+            parse_issue_body(self._body(payload))
 
 
 if __name__ == "__main__":
