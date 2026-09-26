@@ -7,7 +7,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Protocol
 
-from .engine import acknowledge, claim, expire, fail, progress, release, renew, takeover, wait
+from .engine import acknowledge, claim, expire, fail, progress, release, renew, resume, takeover, wait
 from .github_state import GitHubApiError, GitHubStateStore
 from .model import MutationResult, Role, WaitReason
 from .snapshot import parse_issue_body, render_issue_body
@@ -91,6 +91,8 @@ def _apply_to_state(
             reason=WaitReason(str(_required(payload, "reason"))),
             evidence_ref=str(_required(payload, "evidence_ref")),
         )
+    if operation == "resume":
+        return resume(state, **common_current)
     if operation == "release":
         return release(state, **common_current)
     if operation == "fail":
