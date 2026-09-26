@@ -136,7 +136,8 @@ Contract:
 - these were corrected before review readiness;
 - RED run `36257955287` then exposed unbounded high-frequency idempotency retention;
 - bounded retention + snapshot-order preservation were added;
-- exact-head run `36258281283` on `07f413e59c07db03cd9633db793a8d2147b965a4`: full unit suite + workflow contract + compile check PASS before final documentation reconciliation.
+- exact-head run `36258281283` on `07f413e59c07db03cd9633db793a8d2147b965a4`: full unit suite + workflow contract + compile check PASS after implementation hardening;
+- documentation-reconciled run `36258480737` on `0340741020195aee70ea9e4fa1fd982addd93825`: full unit suite + workflow contract + compile check PASS before this final Current State normalization.
 
 ## Current verification boundary
 
@@ -169,4 +170,4 @@ Do not represent v0.1 as operationally accepted until:
 
 ## Next action
 
-`Run exact-head CI after final documentation reconciliation -> mark PR #2 ready for independent formal Review -> obtain independent Review for PR #2 and devflow PR #108 -> merge only after both review boundaries are satisfied -> run one bounded claim/release workflow smoke on merged main -> reconcile Issue #1 / Current State / devflow Control #107.`
+`Obtain independent formal Review for execution-coordinator PR #2 and devflow protocol PR #108 -> merge only after both review boundaries and current-head CI are satisfied -> run one bounded claim/release workflow smoke on merged main -> reconcile Issue #1 / Current State / devflow Control #107.`
