@@ -13,6 +13,8 @@ from .model import (
     IdempotencyRecord,
     Role,
     WaitReason,
+    roles_can_share_conflict_key,
+    same_worker_role_conflict,
 )
 
 
@@ -123,6 +125,7 @@ def _validate_authority_invariants(
     generations: dict[str, int],
 ) -> None:
     seen_boundaries: set[str] = set()
+    prior_claims: list[Claim] = []
     for claim in claims.values():
         boundary = f"{claim.task}|{claim.role.value}"
         if boundary in seen_boundaries:
@@ -131,6 +134,23 @@ def _validate_authority_invariants(
 
         if generations.get(boundary) != claim.generation:
             raise SnapshotError("active claim generation does not match generation table")
+
+        for active in prior_claims:
+            if same_worker_role_conflict(
+                active,
+                task=claim.task,
+                role=claim.role,
+                worker_id=claim.worker_id,
+            ):
+                raise SnapshotError(
+                    "same worker cannot hold implementer and reviewer authority for one task"
+                )
+            if (
+                set(active.conflict_keys).intersection(claim.conflict_keys)
+                and not roles_can_share_conflict_key(active.role, claim.role)
+            ):
+                raise SnapshotError("active claims contain incompatible conflict-key ownership")
+        prior_claims.append(claim)
 
         if claim.state is ExecutionState.WAITING:
             if claim.wait_reason is None:
