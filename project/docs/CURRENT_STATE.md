@@ -2,18 +2,20 @@
 
 ## Repository state
 
-`V0.1 CANDIDATE / CHANGES ADDRESSED / AWAITING INDEPENDENT RE-REVIEW`
+`V0.1 OPERATIONAL / ACCEPTED`
 
 `execution-coordinator` is the separate runtime implementation boundary for devflow Execution Coordination Protocol v1.
 
-Current implementation work is owned by Issue #1 and PR #2 on branch `work/issue-1-v01-core`.
+Accepted default `main` is `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f`, merged from PR #2 after current-head review and exact-head verification. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
 
 Cross-repository authority remains:
-- devflow Work Order #105;
-- devflow protocol/spec Issue #106 and PR #108;
-- devflow Repository Control #107.
+- devflow Work Order #105 owns the broader multi-agent execution-coordination objective;
+- devflow protocol/spec Issue #106 / merged PR #108 owns Protocol v1 semantics;
+- devflow Repository Control #107 is the cross-repository index;
+- repository Issue #1 / merged PR #2 own the v0.1 runtime implementation evidence;
+- Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
-## v0.1 candidate implemented behavior
+## Accepted v0.1 behavior
 
 ### Pure claim/lease state machine
 
@@ -28,37 +30,38 @@ Cross-repository authority remains:
 - default 15-minute lease;
 - heartbeat and forward-progress timestamps are independent;
 - explicit `WAITING` state with evidence-backed wait reason;
-- `WAITING` remains lease-bound and does not acquire indefinite ownership merely because wait evidence exists;
+- `WAITING` remains lease-bound and does not gain indefinite authority from wait evidence;
 - `resume` transitions a live `WAITING` claim back to `RUNNING` and clears wait metadata;
-- normal CI/review/user/dependency/provider waits should release the execution claim whenever safe, as defined by devflow protocol;
+- normal CI/review/user/dependency/provider waits should release execution authority whenever safe under the devflow protocol;
 - stale-generation fencing;
-- lease expiry and higher-generation takeover after expiry sweep;
-- idempotency-key replay with mismatched-payload rejection;
-- retry wall-clock time is excluded from logical idempotency identity;
+- explicit expiry sweep followed by higher-generation takeover;
+- retry-safe idempotency with mismatched-payload rejection;
+- retry wall-clock time excluded from logical idempotency identity;
 - release/failure/expiry lifecycle events.
 
 ### Bounded idempotency retention
 
-- current snapshot retains at most 128 idempotency records;
-- high-frequency non-event records such as renew/progress/wait/resume are evicted before lifecycle authority records when possible;
-- the newest mutation record is retained by the write that creates it;
-- if the retained set contains only lifecycle authority records, the oldest record is evicted to preserve the hard cap;
-- idempotency insertion/retention order is preserved through Issue snapshot serialize/parse cycles;
-- an oversized idempotency map in an externally modified snapshot fails closed;
-- idempotency is bounded retention, not permanent deduplication: once a key has been evicted, a later reuse may be treated as a fresh logical request.
+- snapshot retains at most 128 idempotency records;
+- high-frequency non-event records are evicted before lifecycle authority records where possible;
+- newest mutation record is retained by the write that creates it;
+- if only lifecycle authority records remain, the oldest record is evicted to preserve the cap;
+- retention order survives snapshot serialize/parse cycles;
+- oversized externally modified idempotency state fails closed;
+- evicted keys are no longer permanently deduplicated.
 
 ### Strict system-Issue snapshot
 
-- runtime current state is represented by one versioned JSON snapshot inside the long-lived Issue #3 `[SYSTEM] Execution Coordination State`;
+- runtime current state is represented by one versioned JSON snapshot inside Issue #3;
 - exactly one marker pair is accepted;
 - absent marker initializes an empty state;
-- malformed JSON, unsupported schema version, duplicate/missing/reversed markers and inconsistent authority state fail closed;
+- malformed JSON, unsupported schema, duplicate/missing/reversed markers, and inconsistent authority state fail closed;
 - active task/role boundaries are unique;
-- active claim generations must match the generation table;
+- active claim generations match the generation table;
+- incompatible conflict-key ownership and same-worker implementer/reviewer overlap are rejected on decode as well as claim acquisition;
 - waiting metadata must be consistent with `WAITING` state;
 - timestamps serialize in UTC `Z` form;
 - human-readable text outside the machine snapshot is preserved;
-- heartbeats/progress do not create append-only comments.
+- heartbeat/progress churn does not create append-only comments.
 
 ### GitHub Issue state adapter
 
@@ -67,12 +70,12 @@ Cross-repository authority remains:
 - PATCH authoritative snapshot;
 - POST durable lifecycle comments;
 - non-2xx/transport/invalid-response failures raise explicit errors without exposing token values;
-- Issue-body PATCH success is the authority commit point;
-- lifecycle comments are secondary audit evidence after the snapshot commit.
+- Issue-body PATCH is the authority commit point;
+- lifecycle comments are secondary audit evidence after snapshot commit.
 
 ### Mutation entrypoint
 
-Logical operations currently supported:
+Supported v0.1 operations:
 - `claim`;
 - `takeover`;
 - `acknowledge`;
@@ -90,98 +93,66 @@ CLI entry:
 python -m execution_coordinator.mutate --operation <op> --payload-json <json> --idempotency-key <key>
 ```
 
-Required runtime environment for GitHub-backed mutation:
-- `GITHUB_TOKEN`;
-- `GITHUB_REPOSITORY`;
-- `STATE_ISSUE_NUMBER`.
+GitHub-backed mutation requires `GITHUB_TOKEN`, `GITHUB_REPOSITORY`, and `STATE_ISSUE_NUMBER`.
 
 ### GitHub Actions mutation serialization
 
-Candidate workflow: `.github/workflows/mutate-state.yml`.
+`.github/workflows/mutate-state.yml` is operational on default main.
 
 Contract:
-- manually dispatched mutation inputs: `operation`, `payload_json`, `idempotency_key`;
+- `workflow_dispatch` inputs: `operation`, `payload_json`, `idempotency_key`;
 - one global concurrency group: `execution-coordinator-state-mutation`;
-- `queue: max`;
-- no `cancel-in-progress: true`;
+- `queue: max` and no `cancel-in-progress: true`;
 - permissions limited to `contents: read` and `issues: write`;
-- current system-state Issue is #3;
-- external checkout/setup-python Actions are full-SHA pinned;
-- untrusted dispatch payload is passed through environment variables rather than interpolated directly into shell source;
-- mutation job has a `refs/heads/main` guard to prevent accidental mutation from ordinary non-default dispatches;
-- the main-ref guard is an operational misuse guard, not a standalone authorization/security boundary; repository/workflow write authority remains governed by GitHub permissions and repository controls.
+- system-state Issue is #3;
+- external Actions are full-SHA pinned;
+- untrusted dispatch payload is passed through environment variables;
+- mutation job has a `refs/heads/main` misuse guard;
+- that main-ref guard is not an independent authorization boundary.
 
 ## Review-policy boundary
 
-- `worker_id` is runtime coordination metadata supplied by the client; it is not a cryptographic identity or GitHub security principal;
-- same-worker implementer/reviewer overlap is rejected as an additional runtime safety check;
-- authoritative enforcement of independent formal Review remains in devflow Review Provenance / repository policy, not in self-asserted `worker_id` values.
+- `worker_id` is runtime coordination metadata supplied by the client, not a cryptographic identity or GitHub security principal;
+- same-worker implementer/reviewer overlap is an additional runtime safety check;
+- formal Review provenance and reviewer-signature requirements remain governed by devflow policy, not `worker_id`.
 
-## Known v0.1 operational limitations
+## Verification evidence
 
-- `takeover` does not implicitly sweep an expired claim in the same mutation; v0.1 callers use `expire` followed by `takeover` under the serialized mutation lane;
-- the main-ref workflow guard is not equivalent to a protected GitHub Environment;
-- bounded idempotency retention means evicted keys are no longer deduplicated forever;
-- mutation failures are reported by process exit status/stderr rather than a dedicated machine-readable failure envelope;
-- Issue PATCH response equality is used as an additional success check and has not yet been tested against hypothetical GitHub body normalization changes;
-- fine-grained concurrency lanes and external storage are intentionally deferred.
+### Candidate / regression verification
 
-## TDD / verification evidence
+- WAITING/resume remediation: RED `36260527341` -> GREEN `36260609780`;
+- contradictory snapshot authority invariants: RED `36264453074` -> GREEN `36264592144`;
+- final PR #2 exact-head verify `36264592144` PASS on `46374f07e0d9c94254119dcc276b04ae678672ce`.
 
-### Initial implementation slices
+### Accepted main
 
-- claim/lease RED `36257008019` -> GREEN `36257105132`;
-- snapshot RED `36257206075` -> GREEN `36257253966`;
-- GitHub adapter/mutation RED `36257309796`; payload-dispatch defect -> GREEN `36257431723`;
-- workflow contract RED `36257478480` -> GREEN `36257604849`;
-- retry-time/self-review/main-ref hardening RED `36257798498`;
-- bounded-retention RED `36257955287` -> GREEN `36258281283`;
-- authority-snapshot invariant RED `36259093564` -> GREEN `36259143538`;
-- expired-active-claim continuation RED `36259311066` -> GREEN `36259362685` on `990b2a4751c8b41a7501aaa9cbb49358329f5d94`.
+- PR #2 merged as `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f` after Protocol PR #108 merged first;
+- post-merge main verify run `36266236803` PASS;
+- bounded real claim smoke on merged main: mutation run `36266294818` PASS;
+- bounded release smoke on merged main: mutation run `36266348606` PASS;
+- Issue #3 after release has `claims: {}` and retains generation/idempotency evidence for the completed smoke.
 
-### Independent Review findings and remediation
+This is direct operational evidence that the default-main serialized mutation path can commit and release one bounded synthetic claim without leaving active authority behind.
 
-Claude Code DIFFERENT_AGENT review on PR #2 at `990b2a4751c8b41a7501aaa9cbb49358329f5d94` returned CHANGES_REQUESTED with two P1 findings:
+## Known v0.1 limitations / deferred conformance
 
-1. evidence-backed `WAITING` claims could bypass lease expiry indefinitely;
-2. no `WAITING -> RUNNING` resume transition existed.
-
-Remediation TDD:
-- RED run `36260527341` on test head `388e6a23914872de504447227d92f9c40e411737` failed because `resume` was absent and the dispatcher rejected `resume`;
-- implementation removed the WAITING lease-expiry exemption and added explicit `resume`;
-- GREEN run `36260609780` on `9d35160109d768e877d8f6f5b074eb9ee170cd74`: unit tests + compile check PASS before documentation reconciliation.
-
-The independent review must be re-run against the post-fix current head before merge.
-
-## Current verification boundary
-
-The actual authority-changing `workflow_dispatch` path has **not** yet been executed against Issue #3 because the mutation workflow is not on the default `main` branch while PR #2 remains under review.
-
-Do not represent v0.1 as operationally accepted until:
-1. devflow protocol PR #108 receives acceptable independent Review and is accepted;
-2. execution-coordinator PR #2 receives acceptable current-head independent formal Review and exact-head CI;
-3. PR #2 is merged through normal policy;
-4. one bounded real `workflow_dispatch` claim/release smoke succeeds against Issue #3 on merged `main`;
-5. post-smoke Current State / Issue #1 / devflow Control #107 are reconciled.
-
-## Not yet implemented
-
-- automatic discovery/ranking of claimable work from devflow/repository Issues;
-- agent bootstrap adapter that automatically calls claim/renew/release;
-- controller-side priority/capability negotiation;
-- repo-monitor projection;
-- fine-grained concurrency lanes beyond the single global mutation lane;
-- external database/service;
-- production deployment.
+- `takeover` does not implicitly sweep expiry; v0.1 uses explicit `expire` then `takeover` under the serialized lane;
+- main-ref workflow guard is misuse prevention, not a protected GitHub Environment or separate security principal;
+- bounded idempotency retention means evicted keys are not deduplicated forever;
+- mutation failures are reported through process exit/stderr rather than a dedicated structured failure envelope;
+- Issue PATCH response equality remains an additional success check and has not been exercised against hypothetical GitHub body normalization;
+- one global queue is intentionally coarse; fine-grained lanes and external storage are deferred;
+- Protocol v1 includes richer `claim(..., expected_state, idempotency_key)` / bounded failure-evidence concepts than the current v0.1 CLI exposes. This is a deferred runtime-conformance gap, not evidence that the accepted v0.1 claim/lease slice implements the full future protocol surface;
+- automatic task discovery/ranking, agent bootstrap automation, controller-side negotiation, and repo-monitor projection are not yet implemented.
 
 ## Safety / authority boundary
 
 - durable task truth remains in devflow and owning repository Issues/PRs;
 - this repository owns only execution-coordination runtime state;
-- the existing devflow MCP remains read-only;
+- devflow MCP remains read-only;
 - repo-monitor remains observer-only;
 - no execution claim overrides release/deploy/publication/credential/permission/destructive/user-decision boundaries.
 
 ## Next action
 
-`Run exact-head CI after this documentation reconciliation -> obtain DIFFERENT_AGENT re-review for execution-coordinator PR #2 and independent Review for devflow protocol PR #108 -> merge only after both review gates pass -> run one bounded claim/release workflow smoke on merged main -> reconcile Issue #1 / Current State / devflow Control #107.`
+`Reconcile repository Issue #1 and devflow Control #107 to the accepted v0.1 main/smoke evidence. Continue later execution-coordination phases only through devflow #105 and bounded repository-local Issues; do not treat v0.1 as full controller/agent negotiation implementation.`
