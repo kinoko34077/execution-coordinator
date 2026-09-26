@@ -50,6 +50,36 @@ class SnapshotCodecTests(unittest.TestCase):
     def _body(self, payload: dict[str, object]) -> str:
         return f"human\n{BEGIN_MARKER}\n{json.dumps(payload)}\n{END_MARKER}\n"
 
+    def _two_claim_payload(
+        self,
+        *,
+        second_task: str,
+        second_role: Role,
+        second_worker: str,
+        second_conflict_key: str,
+    ) -> dict[str, object]:
+        first = claim(
+            CoordinatorState.empty(),
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-a",
+            conflict_keys=("component:example:parser",),
+            now=T0,
+            idempotency_key="claim-first",
+        )
+        second = claim(
+            first.state,
+            task=second_task,
+            role=second_role,
+            worker_id=second_worker,
+            conflict_keys=(second_conflict_key,),
+            now=T0,
+            idempotency_key="claim-second",
+        )
+        rendered = render_issue_body("header\n", second.state)
+        payload_text = rendered.split(BEGIN_MARKER, 1)[1].split(END_MARKER, 1)[0].strip()
+        return json.loads(payload_text)
+
     def test_absent_marker_initializes_empty_state(self) -> None:
         body = "# Execution Coordination State\n\nHuman-readable warning only.\n"
         state = parse_issue_body(body)
@@ -118,6 +148,34 @@ class SnapshotCodecTests(unittest.TestCase):
         duplicate = dict(claim_data)
         duplicate["claim_id"] = f"{claim_id}-duplicate"
         payload["claims"][duplicate["claim_id"]] = duplicate
+        with self.assertRaises(SnapshotError):
+            parse_issue_body(self._body(payload))
+
+    def test_active_incompatible_conflict_keys_fail_closed(self) -> None:
+        payload = self._two_claim_payload(
+            second_task="kinoko34077/example#2",
+            second_role=Role.IMPLEMENTER,
+            second_worker="worker-b",
+            second_conflict_key="component:example:renderer",
+        )
+        claims = list(payload["claims"].values())
+        claims[1]["conflict_keys"] = list(claims[0]["conflict_keys"])
+        with self.assertRaises(SnapshotError):
+            parse_issue_body(self._body(payload))
+
+    def test_same_worker_implementer_reviewer_overlap_fails_closed(self) -> None:
+        payload = self._two_claim_payload(
+            second_task="kinoko34077/example#1",
+            second_role=Role.REVIEWER,
+            second_worker="worker-b",
+            second_conflict_key="component:example:review",
+        )
+        reviewer = next(
+            claim_data
+            for claim_data in payload["claims"].values()
+            if claim_data["role"] == Role.REVIEWER.value
+        )
+        reviewer["worker_id"] = "worker-a"
         with self.assertRaises(SnapshotError):
             parse_issue_body(self._body(payload))
 
