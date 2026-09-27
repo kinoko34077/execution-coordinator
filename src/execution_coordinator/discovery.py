@@ -29,6 +29,7 @@ SUPPORTED_WORK_STATES = frozenset(
         "DONE",
     }
 )
+TRUSTED_AUTHOR_ASSOCIATIONS = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 _STATUS_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _STATUS_LINE = re.compile(
     r"^\s*-\s+Work Status:\s*(?:`([^`\r\n]+)`|([^\s`]+))\s*$",
@@ -70,6 +71,7 @@ class IssueDocument:
     body: str
     html_url: str
     is_pull_request: bool = False
+    author_association: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,6 +143,7 @@ class GitHubIssueReader:
         state = payload.get("state")
         body = payload.get("body")
         html_url = payload.get("html_url")
+        author_association = payload.get("author_association")
         if not isinstance(number, int):
             raise GitHubApiError("GitHub issue response did not contain an integer number")
         if not isinstance(state, str):
@@ -149,6 +152,8 @@ class GitHubIssueReader:
             raise GitHubApiError("GitHub issue response did not contain a string body")
         if not isinstance(html_url, str):
             raise GitHubApiError("GitHub issue response did not contain a string html_url")
+        if author_association is not None and not isinstance(author_association, str):
+            raise GitHubApiError("GitHub issue response had invalid author_association")
         return IssueDocument(
             repository=source.repository,
             number=number,
@@ -156,6 +161,7 @@ class GitHubIssueReader:
             body=body,
             html_url=html_url,
             is_pull_request="pull_request" in payload,
+            author_association=author_association,
         )
 
 
@@ -240,6 +246,12 @@ def _normalize(source: DurableIssueSource, document: IssueDocument) -> ClaimCand
         raise ValueError("canonical source must be an open Issue")
     if not document.html_url.strip():
         raise ValueError("canonical Issue URL is missing")
+    association = (document.author_association or "").strip().upper()
+    if association not in TRUSTED_AUTHOR_ASSOCIATIONS:
+        raise ValueError(
+            "canonical source must have a trusted author association "
+            "(OWNER, MEMBER, or COLLABORATOR)"
+        )
 
     sections = _sections(document.body)
     status = _parse_work_status(document.body, sections)
