@@ -23,6 +23,20 @@ The first implementation target is agent-first execution coordination:
 
 Controller-side priority offers and bidirectional dispatch negotiation follow after the agent-first core is proven.
 
+## Read-only current-state query
+
+`execution_coordinator.query.get_state()` is the read-only Protocol v1 state-query boundary. It loads the existing system-Issue body through `GitHubStateStore`, validates it with the same fail-closed snapshot parser used by the mutation path, and returns `CoordinatorState` without PATCHing the Issue, appending comments, or entering the serialized mutation lane.
+
+CLI usage:
+
+```text
+GITHUB_REPOSITORY=owner/execution-coordinator \
+STATE_ISSUE_NUMBER=3 \
+python -m execution_coordinator.query get_state
+```
+
+`GITHUB_TOKEN` is optional for publicly readable repositories and may be supplied for authenticated reads. The command emits the validated schema-v1 state as JSON. This surface does not discover or rank durable work; `list_claimable` remains a later bounded slice.
+
 ## Minimal agent bootstrap adapter
 
 `execution_coordinator.agent.AgentSession` is the first small integration boundary for an agent surface. It does not discover work or generate retry keys; the caller supplies stable idempotency keys and a `MutationGateway` backed by the serialized mutation workflow.

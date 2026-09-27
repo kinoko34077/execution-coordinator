@@ -1,0 +1,65 @@
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import sys
+from typing import Protocol
+
+from .github_state import GitHubApiError, GitHubStateStore
+from .model import CoordinatorState
+from .snapshot import parse_issue_body, state_to_data
+
+
+class StateReader(Protocol):
+    def load_body(self) -> str: ...
+
+
+def get_state(store: StateReader) -> CoordinatorState:
+    """Load and validate the current execution-coordination snapshot.
+
+    This path is intentionally read-only: it never patches the system Issue,
+    appends lifecycle comments, or enters the serialized mutation lane.
+    """
+
+    return parse_issue_body(store.load_body())
+
+
+def _build_store_from_env() -> GitHubStateStore:
+    token = os.environ.get("GITHUB_TOKEN", "")
+    repository = os.environ.get("GITHUB_REPOSITORY", "")
+    issue_raw = os.environ.get("STATE_ISSUE_NUMBER", "")
+    if not repository:
+        raise ValueError("GITHUB_REPOSITORY is required")
+    try:
+        issue_number = int(issue_raw)
+    except ValueError as exc:
+        raise ValueError("STATE_ISSUE_NUMBER must be an integer") from exc
+    return GitHubStateStore(
+        token=token,
+        repository=repository,
+        issue_number=issue_number,
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Read execution-coordinator state without mutating authority"
+    )
+    parser.add_argument("operation", choices=("get_state",))
+    args = parser.parse_args(argv)
+
+    try:
+        if args.operation != "get_state":
+            raise ValueError(f"unsupported query operation: {args.operation}")
+        state = get_state(_build_store_from_env())
+    except (ValueError, GitHubApiError, RuntimeError) as exc:
+        print(f"query failed: {exc}", file=sys.stderr)
+        return 2
+
+    print(json.dumps(state_to_data(state), sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
