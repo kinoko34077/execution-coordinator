@@ -23,6 +23,33 @@ The first implementation target is agent-first execution coordination:
 
 Controller-side priority offers and bidirectional dispatch negotiation follow after the agent-first core is proven.
 
+## Minimal agent bootstrap adapter
+
+`execution_coordinator.agent.AgentSession` is the first small integration boundary for an agent surface. It does not discover work or generate retry keys; the caller supplies stable idempotency keys and a `MutationGateway` backed by the serialized mutation workflow.
+
+```python
+from execution_coordinator.agent import AgentSession
+from execution_coordinator.model import Role
+
+session = AgentSession(
+    gateway,
+    task="owner/repository#123",
+    role=Role.IMPLEMENTER,
+    worker_id="agent-session-1",
+    conflict_keys=("component:parser",),
+)
+
+session.run(
+    lambda active: implement_after_claim(active),
+    claim_idempotency_key="task-123-claim-1",
+    release_idempotency_key="task-123-release-1",
+)
+```
+
+The callback is not entered unless the claim succeeds. The adapter forwards the current claim ID/generation for `renew` and `release`, fences the local session after stale-generation or malformed-authority responses, and leaves intentional external waits to the caller: release the claim before waiting when safe, then claim again through the normal authority path.
+
+This adapter is deliberately not a scheduler, controller, repo-monitor, or full Protocol v1 expected-state/failure-evidence implementation.
+
 ## Canonical cross-repository references
 
 - `kinoko34077/devflow#105` — parent Work Order
