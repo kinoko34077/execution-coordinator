@@ -29,7 +29,7 @@ Controller-side priority offers and bidirectional dispatch negotiation follow af
 
 ```python
 from execution_coordinator.agent import AgentSession
-from execution_coordinator.model import Role
+from execution_coordinator.model import Role, WaitReason
 
 session = AgentSession(
     gateway,
@@ -39,17 +39,28 @@ session = AgentSession(
     conflict_keys=("component:parser",),
 )
 
-session.run(
-    lambda active: implement_after_claim(active),
-    claim_idempotency_key="task-123-claim-1",
-    acknowledge_idempotency_key="task-123-ack-1",
-    release_idempotency_key="task-123-release-1",
+session.claim(idempotency_key="task-123-claim-1")
+session.acknowledge(idempotency_key="task-123-ack-1")
+
+session.wait(
+    reason=WaitReason.CI,
+    evidence_ref="run:123456",
+    idempotency_key="task-123-wait-1",
 )
+# A retained WAITING claim is still lease-bound; renew it before lease expiry.
+session.resume(idempotency_key="task-123-resume-1")
+session.release(idempotency_key="task-123-release-1")
 ```
 
-The callback is not entered unless both claim and `acknowledge` succeed. `AgentSession.acknowledge()` forwards the current claim ID/generation and caller-owned idempotency key, and requires the same authority tuple in the response. A malformed, stale, changed, or rejected acknowledge fences the local session without attempting an unsafe compensating release; the remote claim remains lease-bound. The adapter also forwards the current authority for `renew` and `release`, and leaves intentional external waits to the caller: release the claim before waiting when safe, then claim again through the normal authority path.
+The callback form remains available through `AgentSession.run(...)`; callback work begins only after both claim and `acknowledge` succeed.
 
-This adapter is deliberately not a scheduler, controller, repo-monitor, or full Protocol v1 expected-state/failure-evidence implementation.
+`AgentSession.wait()` exposes the existing evidence-backed runtime WAITING transition. It requires a current claim/generation, an existing `WaitReason`, a non-empty `evidence_ref`, and a caller-owned idempotency key. `AgentSession.resume()` returns that same live authority to `RUNNING` and clears wait metadata through the runtime state machine. Both operations require the same claim ID/generation in the response and fence the local session if the gateway reports stale, malformed, changed, or transport-ambiguous authority.
+
+WAITING does **not** extend or suspend the lease. If a bounded unsafe-to-transfer wait retains execution ownership, the caller must keep renewing before `lease_until`. For ordinary CI/review/user/dependency/provider waits where no mutation remains in flight, release the execution claim when safe instead of consuming a lease indefinitely; later continuation reacquires authority through the normal claim path.
+
+A failed or ambiguous authority mutation does not trigger an invented compensating release when remote commit state is unknown. The local session is fenced and any remote claim remains governed by the existing lease/expiry rules.
+
+This adapter is deliberately not a scheduler, controller, repo-monitor, automatic renewal loop, or full Protocol v1 expected-state/failure-evidence implementation.
 
 ## Canonical cross-repository references
 
