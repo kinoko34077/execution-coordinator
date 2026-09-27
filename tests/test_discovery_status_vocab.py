@@ -23,7 +23,7 @@ class DurableCandidateStatusVocabularyTests(unittest.TestCase):
             status="READY_FOR_IMPLEMENTATION",
         )
         control = _control_body(block=_block(candidates=[candidate]))
-        control = control.replace("\`AUDITED\`", "\`NEEDS_REAUDIT\`")
+        control = control.replace("`AUDITED`", "`NEEDS_REAUDIT`")
         reader = _Reader(
             {
                 ("kinoko34077/devflow", 107): _doc(
