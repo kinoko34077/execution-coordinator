@@ -6,7 +6,7 @@
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination and read-only discovery/runtime/eligibility projections.
 
-The accepted feature baseline through Issue #28 / PR #29 is `d03ac20cbf6e00992f9902239a0515eba4dc0b70`. The moving repository Audit SHA is owned by devflow Control #107 so this document does not self-reference documentation-only reconciliation merges.
+The accepted feature baseline through Issue #28 / PR #32 is `8eaa41ab819693e49d3407b865ef0b5319c3690f`. The moving repository Audit SHA is owned by devflow Control #107 so this document does not self-reference documentation-only reconciliation merges.
 
 Cross-repository authority:
 - devflow Work Order #105 owns the broader multi-agent execution-coordination objective;
@@ -20,7 +20,7 @@ Cross-repository authority:
 - Issue #18 / PR #21 own wait/resume transport-failure fencing closure;
 - Issue #22 / PR #23 own the accepted read-only `get_state` query surface;
 - Issue #25 / PR #26 own the accepted read-only `list_claimable` eligibility projection;
-- Issue #28 / PR #29 own strict exact-reference durable Issue discovery/normalization;
+- Issue #28 / PR #32 own trusted Repository Control task-envelope discovery/normalization;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 ## Accepted runtime behavior
@@ -106,40 +106,31 @@ GitHub Issue #3
 
 It uses the same fail-closed snapshot decoder as the mutation path and performs no PATCH, comment, or serialized mutation-lane entry.
 
-### Read-only durable Issue discovery / normalization
+### Read-only durable candidate discovery / normalization
 
-Issue #28 / PR #29 adds strict exact-reference durable Issue discovery.
+Issue #28 / PR #32 provides the accepted read-only discovery adapter for the devflow #125/#132 durable-candidate source contract.
 
-Input is caller-owned policy plus canonical source identity:
+Input is the exact Repository Control identity returned by live bootstrap:
 
 ```python
 DurableIssueSource(
-    repository="owner/repo",
-    issue_number=123,
-    role=Role.IMPLEMENTER,
-    eligible_work_states=("READY_FOR_IMPLEMENTATION",),
-    conflict_keys=("component:owner/repo:core",),
+    repository="kinoko34077/devflow",
+    issue_number=107,
 )
 ```
 
-`GitHubIssueReader` performs GET-only reads of the exact Issue reference. Normalization succeeds only when:
-- the returned identity matches the requested repository/Issue;
-- the source is an open Issue and not a pull request;
-- exactly one supported `Work Status` is present;
-- the Work Status belongs to the Protocol v1 vocabulary owned by `devflow/.devflow/WORKFLOW.yaml`;
-- Objective, Scope/Design scope, and Acceptance criteria are present and non-empty;
-- the canonical Issue URL is present.
+The adapter reads one explicit `DEVFLOW_EXECUTION_CANDIDATES_V1` block from that Control. Each record is one task envelope with common task-level freshness/lifecycle/scope/blocker/confirmation/provenance fields and one or more role entries. It then fetches only the exact owning task Issues named by the block.
 
-Normalization behavior:
-- caller supplies the requested role and the Work Status values eligible for that role; execution-coordinator does not infer role-to-state policy;
-- `BLOCKED` is derived only from explicit Work Status;
-- `[USER_DECISION]` is recognized only from explicit Next Action content;
-- malformed/ambiguous/unsupported sources become explicit `DiscoveryFailure` records;
-- one malformed source does not hide valid sibling candidates;
-- input order is preserved;
-- no Issue, runtime state, or durable truth is mutated.
+Validation is fail-closed for:
+- trusted author association on the Control, owning task and optional Work Order;
+- exact `source_ref`, repository, task and entry identity;
+- Control `Repository State=ACTIVE` and current `[USER_DECISION]` / `[HUMAN_GATE]` vetoes;
+- non-empty owning body and canonical `task_body_sha256` freshness;
+- duplicate JSON keys, duplicate task envelopes, duplicate roles, unknown fields and malformed/partial markers;
+- exact role/status/action combinations and explicit conflict-key forms;
+- open Issue and `[WORK ORDER]` provenance requirements.
 
-The recognized Work Status set mirrors Protocol v1 and must be reconciled if the canonical devflow vocabulary changes.
+The deprecated singular `DEVFLOW_EXECUTION_CANDIDATE_V1` owning-Issue marker is ignored and never a fallback source. Marker absence is valid and yields no candidates. The adapter preserves diagnostic fields for `list_claimable` but does not rank, schedule, publish/refresh projections, submit claims, recover `IMPLEMENTING` work, mutate Issues or runtime Issue #3, or authorize protected release/deploy/publication/credential/permission/destructive operations.
 
 ### Read-only `list_claimable` eligibility projection
 
@@ -188,17 +179,17 @@ Properties:
 - merge `299d2577d6cbef5eb87a88188996e5d9daf1385d`;
 - post-merge Verify `36297162959`: PASS.
 
-### Durable discovery Issue #28 / PR #29
+### Durable discovery Issue #28 / PR #32
 
-- initial RED `36297981633` @ `6487031e143d1be14ff70de7e3b01988b07af623`: existing suite passed; nine new discovery contract tests failed because the module did not yet exist;
-- implementation GREEN `36298061406` @ `5ba10d6417d91e5b323ba8be8ab580ee19e38375`;
-- pre-PR/docs GREEN `36298106727` @ `af8b9ec885a1a0e1e84f4cd5c28f149d8e5a52ae`;
-- review-hardening RED `36298263353` @ `72af30c894e4cdd61765c5138c35b84c5437a0d2` exposed unsupported uppercase Work Status acceptance;
-- current-head push GREEN `36298315601` and PR-trigger exact-head GREEN `36298318545` @ `1861ca73f58d8c76e67db06474e2446c78807896`;
-- formal Review Provenance v2 `5329032900`: PASS;
-- PR #29 merge `d03ac20cbf6e00992f9902239a0515eba4dc0b70`;
-- post-merge Verify `36298411969`: PASS;
-- Issue #3 remained unchanged at `updated_at=2026-09-27T03:30:40Z` with `claims: {}`.
+- accepted upstream devflow #125 / PR #132 merge: `7eaf3c7be566beeb5984ac1a2a78bc44b6dde988`;
+- rewritten branch exact head: `dcc27003bac969b7289f743584e88bba8b5c8878`;
+- pre-merge Verify: `36311759618` SUCCESS;
+- Formal Review v2: `5329886612` PASS with zero blocking findings;
+- merge: `8eaa41ab819693e49d3407b865ef0b5319c3690f`;
+- main `discovery.py` SHA: `a18865392ffa653a987c3e10e921ec06dddf575c`;
+- main tests and README were read back with the plural Control-projection contract;
+- no PR workflow run is exposed for the merge commit yet; devflow #107 remains `NEEDS_REAUDIT` pending fresh owner-side audit and Current State/control reconciliation;
+- Issue #3 remained outside this docs/code slice.
 
 ## Review / identity boundary
 
@@ -209,7 +200,7 @@ Properties:
 ## Known limitations / deferred protocol surface
 
 Not yet implemented:
-- GitHub-wide/frontier source selection: current durable discovery requires exact Issue references from the caller;
+- GitHub-wide/frontier source selection: current durable discovery consumes exact Control projection records and does not enumerate the world;
 - arbitrary free-form Issue/Work Order interpretation outside the strict supported durable envelope;
 - priority/dependency frontier ranking and self-selection;
 - capability/environment matching;
@@ -234,4 +225,4 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 
 ## Next action
 
-Issue #28 / PR #29 is accepted at the feature layer. After this Current State reconciliation is merged, no repository-local implementation slice should remain active until a new Issue is selected. The next smallest bounded gap is a composed read-only exact-reference path combining durable discovery with existing `list_claimable`; GitHub-wide source selection, ranking, capability matching, scheduling, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
+Issue #28 / PR #32 is accepted at the feature layer. After this Current State reconciliation is merged, no repository-local implementation slice should remain active until a new Issue is selected and devflow #107 records a fresh audit. The next smallest bounded gap is a composed read-only Control-projection path combining durable discovery with existing `list_claimable`; GitHub-wide source selection, ranking, capability matching, scheduling, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
