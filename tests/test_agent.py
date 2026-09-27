@@ -242,7 +242,7 @@ class AgentSessionTests(unittest.TestCase):
     def test_acknowledge_forwards_current_authority_and_idempotency_key(self) -> None:
         gateway = _Gateway()
         session = self._session(gateway)
-        session.claim(idempotency_key="claim-1")
+        claim_result = session.claim(idempotency_key="claim-1")
 
         result = session.acknowledge(idempotency_key="ack-1")
 
@@ -254,8 +254,8 @@ class AgentSessionTests(unittest.TestCase):
         )
         self.assertEqual(
             {
-                "claim_id": gateway.calls[0][1]["claim_id"],
-                "generation": gateway.calls[0][1]["generation"],
+                "claim_id": claim_result.claim_id,
+                "generation": claim_result.generation,
             },
             gateway.calls[1][1],
         )
