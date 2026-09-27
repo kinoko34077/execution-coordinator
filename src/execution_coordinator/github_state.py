@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request, urlopen
@@ -8,6 +10,26 @@ from urllib.request import Request, urlopen
 
 class GitHubApiError(RuntimeError):
     """GitHub API request failed without exposing credentials."""
+
+
+@dataclass(frozen=True, slots=True)
+class IssueBodyRead:
+    """One read-only GitHub Issue body plus its source freshness timestamp."""
+
+    body: str
+    updated_at: str
+
+
+def _validate_updated_at(value: object) -> str:
+    if not isinstance(value, str) or not value.endswith("Z"):
+        raise GitHubApiError("GitHub issue response did not contain a valid updated_at")
+    try:
+        parsed = datetime.fromisoformat(value[:-1] + "+00:00")
+    except ValueError as exc:
+        raise GitHubApiError("GitHub issue response did not contain a valid updated_at") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() != timezone.utc.utcoffset(parsed):
+        raise GitHubApiError("GitHub issue response did not contain a valid updated_at")
+    return value
 
 
 class GitHubStateStore:
@@ -74,6 +96,15 @@ class GitHubStateStore:
         if not isinstance(payload, dict) or not isinstance(payload.get("body"), str):
             raise GitHubApiError("GitHub issue response did not contain a string body")
         return payload["body"]
+
+    def load_body_with_metadata(self) -> IssueBodyRead:
+        payload = self._request("GET", self.issue_url)
+        if not isinstance(payload, dict) or not isinstance(payload.get("body"), str):
+            raise GitHubApiError("GitHub issue response did not contain a string body")
+        return IssueBodyRead(
+            body=payload["body"],
+            updated_at=_validate_updated_at(payload.get("updated_at")),
+        )
 
     def save_body(self, body: str) -> None:
         payload = self._request("PATCH", self.issue_url, {"body": body})

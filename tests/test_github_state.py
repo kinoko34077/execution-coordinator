@@ -10,6 +10,7 @@ from execution_coordinator.github_state import GitHubApiError, GitHubStateStore
 
 class _Handler(BaseHTTPRequestHandler):
     body = "initial body"
+    updated_at: object = "2026-09-27T12:00:00Z"
     comments: list[str] = []
     fail_patch = False
 
@@ -28,7 +29,10 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/repos/owner/repo/issues/9":
             self._json(404, {"message": "not found"})
             return
-        self._json(200, {"number": 9, "body": type(self).body})
+        payload: dict[str, object] = {"number": 9, "body": type(self).body}
+        if type(self).updated_at is not None:
+            payload["updated_at"] = type(self).updated_at
+        self._json(200, payload)
 
     def do_PATCH(self) -> None:  # noqa: N802
         if self.path != "/repos/owner/repo/issues/9":
@@ -69,6 +73,7 @@ class GitHubStateStoreTests(unittest.TestCase):
 
     def setUp(self) -> None:
         _Handler.body = "initial body"
+        _Handler.updated_at = "2026-09-27T12:00:00Z"
         _Handler.comments = []
         _Handler.fail_patch = False
         self.store = GitHubStateStore(
@@ -80,6 +85,25 @@ class GitHubStateStoreTests(unittest.TestCase):
 
     def test_load_returns_issue_body(self) -> None:
         self.assertEqual("initial body", self.store.load_body())
+
+    def test_metadata_read_returns_body_and_exact_updated_at(self) -> None:
+        load_with_metadata = getattr(self.store, "load_body_with_metadata", None)
+        self.assertIsNotNone(load_with_metadata, "metadata-bearing state read must exist")
+
+        result = load_with_metadata()
+
+        self.assertEqual(result.body, "initial body")
+        self.assertEqual(result.updated_at, "2026-09-27T12:00:00Z")
+
+    def test_metadata_read_fails_closed_on_missing_or_malformed_updated_at(self) -> None:
+        load_with_metadata = getattr(self.store, "load_body_with_metadata", None)
+        self.assertIsNotNone(load_with_metadata, "metadata-bearing state read must exist")
+
+        for updated_at in (None, "not-a-timestamp", 123):
+            with self.subTest(updated_at=updated_at):
+                _Handler.updated_at = updated_at
+                with self.assertRaises(GitHubApiError):
+                    load_with_metadata()
 
     def test_save_replaces_issue_body(self) -> None:
         self.store.save_body("replacement")
