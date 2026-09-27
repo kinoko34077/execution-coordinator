@@ -113,13 +113,24 @@ Contract:
 
 ### Agent bootstrap adapter (Phase 3)
 
-- `AgentSession` provides the bounded `claim -> callback/work -> renew -> release` integration path;
+- `AgentSession` provides the bounded `claim -> acknowledge -> callback/work -> renew -> release` integration path;
 - implementation callback execution is refused unless claim acquisition succeeds;
 - current `claim_id` / `generation` are retained and forwarded to renew/release;
 - stale-generation, malformed-authority, and changed-authority responses fence the local adapter session;
 - release is explicit and repeated release is idempotent at the adapter boundary;
 - the adapter does not discover/rank tasks and does not create scheduler/controller authority;
 - merged-main adapter smoke completed with `tests.test_agent` 8/8 PASS and Issue #3 returned to `claims: {}`.
+
+### Issue #9 candidate lifecycle conformance
+
+- `AgentSession.acknowledge()` forwards the current `claim_id`, `generation`, and caller-owned idempotency key through the serialized mutation gateway;
+- a successful acknowledge must return the unchanged authority tuple before callback/work begins;
+- the candidate lifecycle is `claim -> acknowledge -> callback/work -> release`;
+- malformed, stale, changed, or rejected acknowledge responses fence the local session and suppress callback/work;
+- acknowledge failure does not attempt compensating release because remote authority remains lease-bound and expiration is the safe fallback;
+- caller-supplied claim, acknowledge, renew, and release idempotency keys remain explicit and are not generated or replaced by the adapter;
+- discovery/ranking, automatic scheduling, controller negotiation, repo-monitor projection, and new durable state remain out of scope.
+
 ## Review-policy boundary
 
 - `worker_id` is runtime coordination metadata supplied by the client, not a cryptographic identity or GitHub security principal;
@@ -169,4 +180,4 @@ This is direct operational evidence that the default-main serialized mutation pa
 
 ## Next action
 
-`Issue #5 / PR #6 Phase 3 bootstrap adapter is accepted on main. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
+`Issue #9 is the active bounded Phase 3 lifecycle-conformance candidate on branch phase3/issue-9-acknowledge-before-work. Complete exact-head Verify, formal Review, merged-main Verify, and post-merge no-active-claim smoke before treating acknowledge-before-work as accepted. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
