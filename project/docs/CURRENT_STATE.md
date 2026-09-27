@@ -6,7 +6,7 @@
 
 `execution-coordinator` is the separate runtime implementation boundary for devflow Execution Coordination Protocol v1.
 
-Accepted default `main` is `1210b506ad1565159d0fb5d934eca66ca166542a`, after runtime PR #2 merged as `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f`, state-reconciliation PR #4 merged as `238ffb9d8a7f51d0416fd0d3f9b96f1e4fb17944`, and Phase 3 bootstrap-adapter PR #6 merged as `1210b506ad1565159d0fb5d934eca66ca166542a`. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
+Accepted runtime/adapter behavior baseline is `1210b506ad1565159d0fb5d934eca66ca166542a`, after runtime PR #2 merged as `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f`, state-reconciliation PR #4 merged as `238ffb9d8a7f51d0416fd0d3f9b96f1e4fb17944`, and Phase 3 bootstrap-adapter PR #6 merged as `1210b506ad1565159d0fb5d934eca66ca166542a`. Later documentation-only reconciliation commits do not change runtime authority semantics; the current repository Audit SHA is owned by devflow Control #107. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
 
 Cross-repository authority remains:
 - devflow Work Order #105 owns the broader multi-agent execution-coordination objective;
