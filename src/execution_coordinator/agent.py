@@ -295,7 +295,7 @@ class AgentSession:
                 expected_state=ExecutionState.WAITING,
             )
             return result
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
 
@@ -317,7 +317,7 @@ class AgentSession:
                 expected_state=ExecutionState.RUNNING,
             )
             return result
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
 
