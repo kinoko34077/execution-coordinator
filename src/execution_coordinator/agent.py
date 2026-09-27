@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from typing import Callable, Protocol, TypeVar
 
-from .engine import CoordinationError
 from .model import ExecutionState, MutationResult, Role, WaitReason
 
 
@@ -242,7 +241,7 @@ class AgentSession:
                 operation="renew",
             )
             return result
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
 
@@ -261,7 +260,7 @@ class AgentSession:
                 operation="progress",
             )
             return result
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
 
@@ -339,7 +338,7 @@ class AgentSession:
                 generation=generation,
                 operation="fail",
             )
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
         self._claim_id = None
@@ -364,7 +363,7 @@ class AgentSession:
                 generation=generation,
                 operation="release",
             )
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
         self._claim_id = None
