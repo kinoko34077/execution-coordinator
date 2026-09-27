@@ -7,6 +7,8 @@ from contextlib import redirect_stdout
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import execution_coordinator.github_state as github_state
+import execution_coordinator.query as query
 from execution_coordinator.model import Claim, CoordinatorState, ExecutionState, Role, WaitReason
 from execution_coordinator.query import get_state, main
 from execution_coordinator.snapshot import SnapshotError, render_issue_body
@@ -36,6 +38,20 @@ class RecordingStore:
     def add_comment(self, body: str) -> None:
         self.comment_calls += 1
         raise AssertionError("get_state must not append comments")
+
+
+class MetadataRecordingStore(RecordingStore):
+    def __init__(self, body: str, updated_at: str) -> None:
+        super().__init__(body)
+        self.updated_at = updated_at
+        self.metadata_load_calls = 0
+
+    def load_body_with_metadata(self):
+        self.metadata_load_calls += 1
+        metadata_type = getattr(github_state, "IssueBodyRead", None)
+        if metadata_type is None:
+            raise AssertionError("IssueBodyRead must exist")
+        return metadata_type(body=self.body, updated_at=self.updated_at)
 
 
 def _state_with_claim(*, state: ExecutionState) -> CoordinatorState:
@@ -97,6 +113,35 @@ class GetStateTests(unittest.TestCase):
         self.assertEqual(claim.wait_reason, WaitReason.CI)
         self.assertEqual(claim.evidence_ref, "run:123")
 
+    def test_metadata_query_result_returns_state_and_source_updated_at(self) -> None:
+        get_state_result = getattr(query, "get_state_result", None)
+        self.assertIsNotNone(get_state_result, "metadata-bearing get_state result must exist")
+        expected = _state_with_claim(state=ExecutionState.RUNNING)
+        store = MetadataRecordingStore(
+            render_issue_body("", expected),
+            "2026-09-27T12:00:00Z",
+        )
+
+        result = get_state_result(store)
+
+        self.assertEqual(result.state, expected)
+        self.assertEqual(result.source_updated_at, "2026-09-27T12:00:00Z")
+        self.assertEqual(store.metadata_load_calls, 1)
+        self.assertEqual(store.load_calls, 0)
+        self.assertEqual(store.save_calls, 0)
+        self.assertEqual(store.comment_calls, 0)
+
+    def test_metadata_query_result_falls_back_for_legacy_reader(self) -> None:
+        get_state_result = getattr(query, "get_state_result", None)
+        self.assertIsNotNone(get_state_result, "metadata-bearing get_state result must exist")
+        store = RecordingStore(render_issue_body("", CoordinatorState.empty()))
+
+        result = get_state_result(store)
+
+        self.assertEqual(result.state, CoordinatorState.empty())
+        self.assertIsNone(result.source_updated_at)
+        self.assertEqual(store.load_calls, 1)
+
     def test_malformed_snapshot_fails_closed_without_writes(self) -> None:
         store = RecordingStore(
             "<!-- EXECUTION_COORDINATOR_STATE_V1_BEGIN -->\n{bad json}\n"
@@ -129,6 +174,25 @@ class GetStateTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["schema_version"], 1)
+        self.assertEqual(payload["claims"]["clm_query"]["state"], "RUNNING")
+        self.assertIsNone(payload["source_updated_at"])
+        self.assertEqual(store.save_calls, 0)
+        self.assertEqual(store.comment_calls, 0)
+
+    def test_cli_prints_source_updated_at_when_metadata_is_available(self) -> None:
+        store = MetadataRecordingStore(
+            render_issue_body("", _state_with_claim(state=ExecutionState.RUNNING)),
+            "2026-09-27T12:00:00Z",
+        )
+        stdout = io.StringIO()
+
+        with patch("execution_coordinator.query._build_store_from_env", return_value=store):
+            with redirect_stdout(stdout):
+                exit_code = main(["get_state"])
+
+        self.assertEqual(exit_code, 0)
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(payload["source_updated_at"], "2026-09-27T12:00:00Z")
         self.assertEqual(payload["claims"]["clm_query"]["state"], "RUNNING")
         self.assertEqual(store.save_calls, 0)
         self.assertEqual(store.comment_calls, 0)
