@@ -74,6 +74,7 @@ class AgentSessionTests(unittest.TestCase):
             contender.run(
                 lambda _session: entered.append(True),
                 claim_idempotency_key="claim-contender",
+                acknowledge_idempotency_key="ack-contender",
                 release_idempotency_key="release-contender",
             )
 
@@ -88,6 +89,7 @@ class AgentSessionTests(unittest.TestCase):
         result = session.run(
             lambda active: observed.append((active.claim_id, active.generation)) or "done",
             claim_idempotency_key="claim-1",
+            acknowledge_idempotency_key="ack-1",
             release_idempotency_key="release-1",
         )
 
@@ -96,7 +98,10 @@ class AgentSessionTests(unittest.TestCase):
         self.assertIsNotNone(observed[0][0])
         self.assertEqual(1, observed[0][1])
         self.assertIsNone(session.claim_id)
-        self.assertEqual(["claim", "release"], [call[0] for call in gateway.calls])
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
         self.assertEqual(
             {
                 "task": "kinoko34077/example#1",
@@ -153,11 +158,15 @@ class AgentSessionTests(unittest.TestCase):
             session.run(
                 fail,
                 claim_idempotency_key="claim-1",
+                acknowledge_idempotency_key="ack-1",
                 release_idempotency_key="release-1",
             )
 
         self.assertIsNone(session.claim_id)
-        self.assertEqual(["claim", "release"], [call[0] for call in gateway.calls])
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
 
     def test_malformed_claim_response_fences_session(self) -> None:
         class MalformedGateway:
