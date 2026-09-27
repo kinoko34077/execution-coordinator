@@ -75,10 +75,10 @@ def _control_body(
 ) -> str:
     machine = f"\n\n{block}" if block else ""
     return (
-        f"## Repository\n\n\`{repository}\`\n\n"
-        f"## Repository State\n\n\`{repository_state}\`\n\n"
-        "## Work Status\n\n\`AUDITED\`\n\n"
-        f"## Next Action\n\n\`{next_action}\`{machine}\n"
+        f"## Repository\n\n`{repository}`\n\n"
+        f"## Repository State\n\n`{repository_state}`\n\n"
+        "## Work Status\n\n`AUDITED`\n\n"
+        f"## Next Action\n\n`{next_action}`{machine}\n"
     )
 
 
