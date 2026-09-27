@@ -39,11 +39,37 @@ python -m execution_coordinator.query get_state
 
 ## Read-only durable Issue discovery
 
-`execution_coordinator.discovery.discover_claim_candidates()` adds the first bounded canonical-Issue discovery/normalization layer. The caller supplies exact owning-repository Issue references, requested role, the Work Status values eligible for that role, and any conflict keys. `GitHubIssueReader` performs GET-only reads and never mutates Issues or runtime state.
+\`execution_coordinator.discovery.discover_claim_candidates()\` consumes the accepted devflow durable-candidate source contract (\`devflow#125\` / merged PR #132). Each input is the exact Repository Control identity returned by live bootstrap; the adapter reads one explicit \`DEVFLOW_EXECUTION_CANDIDATES_V1\` block and then fetches only the exact task Issues named by that block.
 
-Normalization is deliberately strict. A source must resolve to an open Issue rather than a pull request, have exactly one supported `Work Status`, and contain non-empty Objective, Scope/Design scope, and Acceptance criteria sections. `[USER_DECISION]` is recognized only from the explicit Next Action section; `BLOCKED` is derived only from the explicit Work Status. Malformed or ambiguous sources are returned as `DiscoveryFailure` records instead of being silently treated as claimable.
+The canonical projection is a task envelope with common task-level gates and one or more role entries:
 
-The adapter does not infer role from Work Status and does not embed a role-to-state policy table. GitHub-wide search, arbitrary free-form Issue parsing, priority/dependency ranking, capability matching, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
+\`\`\`text
+<!-- DEVFLOW_EXECUTION_CANDIDATES_V1_BEGIN -->
+{
+  "schema_version": 1,
+  "source_ref": "kinoko34077/devflow#107",
+  "repository": "owner/repository",
+  "candidates": [
+    {
+      "task": "owner/repository#123",
+      "task_body_sha256": "sha256:<64 lowercase hex characters>",
+      "task_work_status": "READY_FOR_IMPLEMENTATION",
+      "entry_ref": "https://github.com/owner/repository/issues/123",
+      "scope_ready": true,
+      "blocked": false,
+      "requires_user_confirmation": false,
+      "roles": [
+        {"role": "implementer", "next_action_tag": "IMPLEMENT"}
+      ]
+    }
+  ]
+}
+<!-- DEVFLOW_EXECUTION_CANDIDATES_V1_END -->
+\`\`\`
+
+The consumer verifies the trusted Control, active Repository State, current Control-level user/Human vetoes, exact owning-task identity, trusted author association, non-empty task body, canonical SHA-256 body digest, structural Work Order provenance, exact task entry URL, duplicate-task/duplicate-role rejection, and the role/status/action matrix. Task-level lifecycle, freshness, scope, blocker and confirmation fields are shared by all roles in one envelope.
+
+The deprecated owning-Issue \`DEVFLOW_EXECUTION_CANDIDATE_V1\` marker is ignored and never used as fallback authority. Malformed, stale, contradictory or untrusted evidence fails closed. Discovery is GET-only: it does not publish/refresh Control projections, mutate Issues or runtime Issue #3, rank work, schedule workers, submit claims, or recover interrupted \`IMPLEMENTING\` work.
 
 ## Read-only claimability projection
 
@@ -87,4 +113,5 @@ This adapter is deliberately not a scheduler, controller, repo-monitor, or full 
 
 - `kinoko34077/devflow#105` — parent Work Order
 - `kinoko34077/devflow#106` — Execution Coordination Protocol v1 specification work
+- `kinoko34077/devflow#125` / PR #126 — accepted durable-candidate source contract v1
 - `kinoko34077/devflow` — durable workflow/control authority
