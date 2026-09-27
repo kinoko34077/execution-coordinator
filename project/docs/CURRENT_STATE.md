@@ -121,7 +121,7 @@ Contract:
 - release is explicit and repeated release is idempotent at the adapter boundary; callback failures retain the original exception while attempting cleanup;
 - the adapter does not discover/rank tasks and does not create scheduler/controller authority;
 - merged-main adapter smoke for PR #6 completed with `tests.test_agent` 8/8 PASS and Issue #3 returned to `claims: {}`;
-- Issue #10 extends this adapter over the existing runtime lifecycle operations; its focused 11-test evidence remains a candidate until exact-head Review, merge, and post-merge smoke complete.
+- Issue #10 extends this adapter over the existing runtime lifecycle operations; its focused 12-test evidence remains a candidate until exact-head Review, merge, and post-merge smoke complete.
 ## Review-policy boundary
 
 - `worker_id` is runtime coordination metadata supplied by the client, not a cryptographic identity or GitHub security principal;
