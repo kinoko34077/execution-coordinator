@@ -135,7 +135,11 @@ class AgentSession:
             raise AdapterProtocolError(
                 f"{operation} response did not return a usable live claim"
             ) from exc
-        if claim is None or returned_generation != generation or returned_state is None:
+        if (
+            claim is None
+            or returned_generation != generation
+            or not isinstance(returned_state, ExecutionState)
+        ):
             raise AdapterProtocolError(
                 f"{operation} response did not return the current live claim"
             )
@@ -144,6 +148,33 @@ class AgentSession:
                 f"{operation} response returned unexpected execution state"
             )
         return returned_state
+
+    @classmethod
+    def _require_terminal(
+        cls,
+        result: MutationResult,
+        *,
+        claim_id: str,
+        generation: int,
+        operation: str,
+    ) -> None:
+        cls._require_same_authority(
+            result,
+            claim_id=claim_id,
+            generation=generation,
+            operation=operation,
+        )
+        try:
+            claims = result.state.claims
+            still_live = claim_id in claims
+        except (AttributeError, TypeError) as exc:
+            raise AdapterProtocolError(
+                f"{operation} response did not return a usable terminal state"
+            ) from exc
+        if still_live:
+            raise AdapterProtocolError(
+                f"{operation} response retained the terminal claim"
+            )
 
     def claim(self, *, idempotency_key: str) -> MutationResult:
         self._ensure_claimable()
@@ -206,12 +237,6 @@ class AgentSession:
                 operation="renew",
                 payload={"claim_id": claim_id, "generation": generation},
                 idempotency_key=idempotency_key,
-            )
-            self._require_same_authority(
-                result,
-                claim_id=claim_id,
-                generation=generation,
-                operation="renew",
             )
             self._execution_state = self._require_live_claim(
                 result,
@@ -311,7 +336,7 @@ class AgentSession:
                 },
                 idempotency_key=idempotency_key,
             )
-            self._require_same_authority(
+            self._require_terminal(
                 result,
                 claim_id=claim_id,
                 generation=generation,
@@ -336,7 +361,7 @@ class AgentSession:
                 payload={"claim_id": claim_id, "generation": generation},
                 idempotency_key=idempotency_key,
             )
-            self._require_same_authority(
+            self._require_terminal(
                 result,
                 claim_id=claim_id,
                 generation=generation,

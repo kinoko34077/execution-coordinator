@@ -214,6 +214,40 @@ class AgentSessionTests(unittest.TestCase):
 
         self.assertTrue(any("release" in note for note in raised.exception.__notes__))
 
+    def test_terminal_response_retaining_claim_fences_session(self) -> None:
+        class RetainedClaimGateway(_Gateway):
+            def mutate(
+                self,
+                *,
+                operation: str,
+                payload: dict[str, object],
+                idempotency_key: str,
+            ) -> MutationResult:
+                before = parse_issue_body(self.store.body)
+                result = super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+                if operation == "release":
+                    return MutationResult(
+                        state=before,
+                        claim_id=result.claim_id,
+                        generation=result.generation,
+                    )
+                return result
+
+        gateway = RetainedClaimGateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+
+        with self.assertRaises(AdapterProtocolError):
+            session.release(idempotency_key="release-1")
+
+        self.assertIsNone(session.claim_id)
+        with self.assertRaisesRegex(RuntimeError, "fenced"):
+            session.progress(idempotency_key="progress-after-fence")
+
     def test_release_is_idempotent_after_success(self) -> None:
         gateway = _Gateway()
         session = self._session(gateway)
