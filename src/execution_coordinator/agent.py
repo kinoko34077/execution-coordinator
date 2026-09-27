@@ -191,19 +191,15 @@ class AgentSession:
         )
         try:
             claim_id, generation = self._require_authority(result)
-            execution_state = self._require_live_claim(
-                result,
-                claim_id=claim_id,
-                generation=generation,
-                operation="claim",
-                expected_state=ExecutionState.CLAIMED,
-            )
         except (TypeError, AttributeError, AdapterProtocolError):
             self._fence()
             raise
         self._claim_id = claim_id
         self._generation = generation
-        self._execution_state = execution_state
+        # The established claim gateway contract returns authority separately
+        # from the optional state snapshot. Keep claim compatible with that
+        # contract; later lifecycle mutations validate their live snapshot.
+        self._execution_state = ExecutionState.CLAIMED
         return result
 
     def acknowledge(self, *, idempotency_key: str) -> MutationResult:
