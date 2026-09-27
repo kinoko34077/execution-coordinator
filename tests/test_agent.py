@@ -74,6 +74,7 @@ class AgentSessionTests(unittest.TestCase):
             contender.run(
                 lambda _session: entered.append(True),
                 claim_idempotency_key="claim-contender",
+                acknowledge_idempotency_key="ack-contender",
                 release_idempotency_key="release-contender",
             )
 
@@ -88,6 +89,7 @@ class AgentSessionTests(unittest.TestCase):
         result = session.run(
             lambda active: observed.append((active.claim_id, active.generation)) or "done",
             claim_idempotency_key="claim-1",
+            acknowledge_idempotency_key="ack-1",
             release_idempotency_key="release-1",
         )
 
@@ -96,7 +98,10 @@ class AgentSessionTests(unittest.TestCase):
         self.assertIsNotNone(observed[0][0])
         self.assertEqual(1, observed[0][1])
         self.assertIsNone(session.claim_id)
-        self.assertEqual(["claim", "release"], [call[0] for call in gateway.calls])
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
         self.assertEqual(
             {
                 "task": "kinoko34077/example#1",
@@ -153,11 +158,15 @@ class AgentSessionTests(unittest.TestCase):
             session.run(
                 fail,
                 claim_idempotency_key="claim-1",
+                acknowledge_idempotency_key="ack-1",
                 release_idempotency_key="release-1",
             )
 
         self.assertIsNone(session.claim_id)
-        self.assertEqual(["claim", "release"], [call[0] for call in gateway.calls])
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
 
     def test_malformed_claim_response_fences_session(self) -> None:
         class MalformedGateway:
@@ -228,6 +237,84 @@ class AgentSessionTests(unittest.TestCase):
         self.assertIsNone(session.claim_id)
         with self.assertRaisesRegex(RuntimeError, "fenced"):
             session.release(idempotency_key="release-after-fence")
+
+
+    def test_acknowledge_forwards_current_authority_and_idempotency_key(self) -> None:
+        gateway = _Gateway()
+        session = self._session(gateway)
+        claim_result = session.claim(idempotency_key="claim-1")
+
+        result = session.acknowledge(idempotency_key="ack-1")
+
+        self.assertEqual(session.claim_id, result.claim_id)
+        self.assertEqual(session.generation, result.generation)
+        self.assertEqual(
+            ("acknowledge", "ack-1"),
+            (gateway.calls[1][0], gateway.calls[1][2]),
+        )
+        self.assertEqual(
+            {
+                "claim_id": claim_result.claim_id,
+                "generation": claim_result.generation,
+            },
+            gateway.calls[1][1],
+        )
+
+    def test_run_acknowledges_before_callback_and_releases_after_callback(self) -> None:
+        gateway = _Gateway()
+        session = self._session(gateway)
+        observed: list[tuple[str | None, int | None]] = []
+
+        result = session.run(
+            lambda active: observed.append((active.claim_id, active.generation)) or "done",
+            claim_idempotency_key="claim-1",
+            acknowledge_idempotency_key="ack-1",
+            release_idempotency_key="release-1",
+        )
+
+        self.assertEqual("done", result)
+        self.assertEqual(1, len(observed))
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
+        self.assertEqual("ack-1", gateway.calls[1][2])
+
+    def test_acknowledge_failure_never_enters_callback_and_fences_session(self) -> None:
+        class FailingAcknowledgeGateway(_Gateway):
+            def mutate(
+                self,
+                *,
+                operation: str,
+                payload: dict[str, object],
+                idempotency_key: str,
+            ) -> MutationResult:
+                if operation == "acknowledge":
+                    self.calls.append((operation, dict(payload), idempotency_key))
+                    raise CoordinationError("acknowledge rejected")
+                return super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+
+        gateway = FailingAcknowledgeGateway()
+        session = self._session(gateway)
+        entered: list[bool] = []
+
+        with self.assertRaises(CoordinationError):
+            session.run(
+                lambda _session: entered.append(True),
+                claim_idempotency_key="claim-1",
+                acknowledge_idempotency_key="ack-1",
+                release_idempotency_key="release-1",
+            )
+
+        self.assertEqual([], entered)
+        self.assertIsNone(session.claim_id)
+        self.assertEqual(["claim", "acknowledge"], [call[0] for call in gateway.calls])
+        with self.assertRaisesRegex(RuntimeError, "fenced"):
+            session.claim(idempotency_key="claim-retry")
 
 
 if __name__ == "__main__":
