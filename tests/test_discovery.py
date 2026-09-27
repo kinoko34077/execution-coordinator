@@ -98,6 +98,84 @@ class DiscoveryTransportTests(unittest.TestCase):
 
         self.assertIsNone(seen[0].get_header("Authorization"))
 
+    def _reader_returning(self, payload: dict[str, object]) -> GitHubIssueReader:
+        return GitHubIssueReader(
+            token="",
+            api_base_url="https://api.github.test",
+            opener=lambda request, timeout: _Response(payload),
+        )
+
+    def test_github_issue_reader_rejects_response_from_another_repository(self) -> None:
+        # e.g. a transferred Issue whose redirect lands in a different repository
+        reader = self._reader_returning(
+            {
+                "number": 7,
+                "state": "open",
+                "body": "",
+                "html_url": "https://github.com/other/repo/issues/7",
+            }
+        )
+
+        with self.assertRaisesRegex(GitHubApiError, "repository identity"):
+            reader.read_issue("owner/repo", 7)
+
+    def test_github_issue_reader_rejects_response_with_another_number(self) -> None:
+        reader = self._reader_returning(
+            {
+                "number": 8,
+                "state": "open",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/issues/8",
+            }
+        )
+
+        with self.assertRaisesRegex(GitHubApiError, "issue number"):
+            reader.read_issue("owner/repo", 7)
+
+    def test_github_issue_reader_rejects_non_canonical_html_url(self) -> None:
+        for html_url in (
+            "https://example.com/owner/repo/issues/7",
+            "https://github.com/owner/repo/issues/7#x",
+            "https://github.com/owner/repo/issues/8",
+            "https://github.com/Owner/repo/issues/7",
+        ):
+            with self.subTest(html_url=html_url):
+                reader = self._reader_returning(
+                    {"number": 7, "state": "open", "body": "", "html_url": html_url}
+                )
+                with self.assertRaises(GitHubApiError):
+                    reader.read_issue("owner/repo", 7)
+
+    def test_github_issue_reader_rejects_mismatched_repository_url(self) -> None:
+        reader = self._reader_returning(
+            {
+                "number": 7,
+                "state": "open",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/issues/7",
+                "repository_url": "https://api.github.test/repos/other/repo",
+            }
+        )
+
+        with self.assertRaisesRegex(GitHubApiError, "repository identity"):
+            reader.read_issue("owner/repo", 7)
+
+    def test_github_issue_reader_accepts_matching_repository_url(self) -> None:
+        reader = self._reader_returning(
+            {
+                "number": 7,
+                "state": "open",
+                "body": "",
+                "html_url": "https://github.com/owner/repo/issues/7",
+                "repository_url": "https://api.github.test/repos/owner/repo",
+            }
+        )
+
+        document = reader.read_issue("owner/repo", 7)
+
+        self.assertEqual(document.repository, "owner/repo")
+        self.assertEqual(document.html_url, "https://github.com/owner/repo/issues/7")
+
     def test_github_issue_reader_propagates_sanitized_non_2xx_failure(self) -> None:
         def opener(request, timeout):
             raise HTTPError(

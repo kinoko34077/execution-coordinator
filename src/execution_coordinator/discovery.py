@@ -40,6 +40,9 @@ _DEVFLOW_REF = re.compile(r"^kinoko34077/devflow#([1-9][0-9]*)$")
 _ENTRY_REF = re.compile(
     r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)$"
 )
+_RESPONSE_HTML_URL = re.compile(
+    r"^https://github\.com/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues|pull)/([1-9][0-9]*)$"
+)
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
 _CONFLICT_KEY = re.compile(
     r"^(repo:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|"
@@ -212,6 +215,9 @@ class GitHubIssueReader:
             title = ""
         if not isinstance(author_association, str):
             author_association = ""
+        _validate_response_identity(
+            payload, repository, issue_number, html_url, self._api_base_url
+        )
         return IssueDocument(
             repository=repository,
             number=number,
@@ -222,6 +228,32 @@ class GitHubIssueReader:
             author_association=author_association,
             is_pull_request="pull_request" in payload,
         )
+
+
+def _validate_response_identity(
+    payload: dict[str, object],
+    repository: str,
+    issue_number: int,
+    html_url: str,
+    api_base_url: str,
+) -> None:
+    """Fail closed unless the response describes exactly the requested Issue.
+
+    The requested source must never be trusted as the document identity: a
+    redirect (e.g. a transferred Issue) can return another repository's Issue.
+    """
+    if payload.get("number") != issue_number:
+        raise GitHubApiError("GitHub issue response did not match the requested issue number")
+    match = _RESPONSE_HTML_URL.fullmatch(html_url)
+    if match is None:
+        raise GitHubApiError("GitHub issue response html_url is not a canonical Issue URL")
+    if match.group(1) != repository:
+        raise GitHubApiError("GitHub issue response repository identity did not match")
+    if int(match.group(2)) != issue_number:
+        raise GitHubApiError("GitHub issue response did not match the requested issue number")
+    repository_url = payload.get("repository_url")
+    if repository_url is not None and repository_url != f"{api_base_url}/repos/{repository}":
+        raise GitHubApiError("GitHub issue response repository identity did not match")
 
 
 def _validate_repository(repository: str) -> None:
