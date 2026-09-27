@@ -6,7 +6,7 @@
 
 `execution-coordinator` is the separate runtime implementation boundary for devflow Execution Coordination Protocol v1.
 
-Accepted default `main` is `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f`, merged from PR #2 after current-head review and exact-head verification. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
+Accepted default `main` is `238ffb9d8a7f51d0416fd0d3f9b96f1e4fb17944`, after runtime PR #2 merged as `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f` and state-reconciliation PR #4 updated the accepted Current State. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
 
 Cross-repository authority remains:
 - devflow Work Order #105 owns the broader multi-agent execution-coordination objective;
