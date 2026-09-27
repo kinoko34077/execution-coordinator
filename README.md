@@ -37,13 +37,21 @@ python -m execution_coordinator.query get_state
 
 `GITHUB_TOKEN` is optional for publicly readable repositories and may be supplied for authenticated reads. The command emits the validated schema-v1 state as JSON.
 
+## Read-only durable Issue discovery
+
+`execution_coordinator.discovery.discover_claim_candidates()` adds the first bounded canonical-Issue discovery/normalization layer. The caller supplies exact owning-repository Issue references, requested role, the Work Status values eligible for that role, and any conflict keys. `GitHubIssueReader` performs GET-only reads and never mutates Issues or runtime state.
+
+Normalization is deliberately strict. A source must resolve to an open Issue rather than a pull request, have exactly one supported `Work Status`, and contain non-empty Objective, Scope/Design scope, and Acceptance criteria sections. `[USER_DECISION]` is recognized only from the explicit Next Action section; `BLOCKED` is derived only from the explicit Work Status. Malformed or ambiguous sources are returned as `DiscoveryFailure` records instead of being silently treated as claimable.
+
+The adapter does not infer role from Work Status and does not embed a role-to-state policy table. GitHub-wide search, arbitrary free-form Issue parsing, priority/dependency ranking, capability matching, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
+
 ## Read-only claimability projection
 
-`execution_coordinator.query.list_claimable()` is the first bounded Protocol v1 `list_claimable` groundwork. It accepts normalized `ClaimCandidate` values supplied by a canonical durable-state reader and filters them against the validated `CoordinatorState`.
+`execution_coordinator.query.list_claimable()` accepts normalized `ClaimCandidate` values supplied by the durable discovery layer and filters them against the validated `CoordinatorState`.
 
 The projection excludes candidates that are not scope-ready, are durably blocked, require user confirmation, have no canonical entry reference, already have current same-task/role ownership, conflict with an incompatible active conflict key, or would create a same-worker implementer/reviewer conflict when `worker_id` is supplied.
 
-The projection is deterministic and preserves input order. It is intentionally not a ranking or scheduling surface: GitHub-wide Issue discovery/parsing, priority/dependency ranking, capability/environment matching, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
+The projection is deterministic and preserves input order. It is intentionally not a ranking or scheduling surface: priority/dependency ranking, capability/environment matching, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
 
 ## Minimal agent bootstrap adapter
 
