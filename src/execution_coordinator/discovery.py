@@ -13,6 +13,22 @@ from .model import Role
 from .query import ClaimCandidate
 
 
+# Protocol v1 durable Work Status vocabulary is owned by devflow/.devflow/WORKFLOW.yaml.
+# This runtime copy is recognition-only; role -> eligible-state policy remains caller-owned.
+SUPPORTED_WORK_STATES = frozenset(
+    {
+        "NEEDS_AUDIT",
+        "AUDITED",
+        "WORK_ORDER_READY",
+        "READY_FOR_IMPLEMENTATION",
+        "IMPLEMENTING",
+        "AWAITING_REVIEW",
+        "BLOCKED",
+        "NEEDS_REAUDIT",
+        "PARKED",
+        "DONE",
+    }
+)
 _STATUS_TOKEN = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _STATUS_LINE = re.compile(
     r"^\s*-\s+Work Status:\s*(?:`([^`\r\n]+)`|([^\s`]+))\s*$",
@@ -40,8 +56,10 @@ class DurableIssueSource:
         if not self.eligible_work_states:
             raise ValueError("eligible_work_states must not be empty")
         for state in self.eligible_work_states:
-            if not _STATUS_TOKEN.fullmatch(state):
-                raise ValueError("eligible_work_states must use canonical status tokens")
+            if state not in SUPPORTED_WORK_STATES:
+                raise ValueError(
+                    "eligible_work_states must use supported Protocol v1 Work Status values"
+                )
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,6 +203,8 @@ def _parse_work_status(body: str, sections: dict[str, list[str]]) -> str:
     status = values[0]
     if not _STATUS_TOKEN.fullmatch(status):
         raise ValueError("Work Status must use a canonical uppercase token")
+    if status not in SUPPORTED_WORK_STATES:
+        raise ValueError(f"unsupported Work Status: {status}")
     return status
 
 
