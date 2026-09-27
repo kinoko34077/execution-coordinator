@@ -144,9 +144,10 @@ class DurableCandidateControlProjectionTests(unittest.TestCase):
         candidate = _envelope(
             task_number=7,
             task_body=task_body,
+            status="AWAITING_REVIEW",
             roles=[
-                {"role": "implementer", "next_action_tag": "IMPLEMENT"},
                 {"role": "reviewer", "next_action_tag": "REVIEW"},
+                {"role": "verifier", "next_action_tag": "VERIFY"},
             ],
         )
         reader = self._reader(
@@ -157,7 +158,7 @@ class DurableCandidateControlProjectionTests(unittest.TestCase):
         result = discover_claim_candidates((CONTROL,), reader)
 
         self.assertEqual(result.failures, ())
-        self.assertEqual([candidate.role for candidate in result.candidates], [Role.IMPLEMENTER, Role.REVIEWER])
+        self.assertEqual([candidate.role for candidate in result.candidates], [Role.REVIEWER, Role.VERIFIER])
         self.assertTrue(all(candidate.scope_ready for candidate in result.candidates))
         self.assertEqual({candidate.task for candidate in result.candidates}, {"owner/repo#7"})
 
