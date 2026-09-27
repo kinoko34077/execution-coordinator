@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timezone
 
 from execution_coordinator.agent import AdapterProtocolError, AgentSession
+from execution_coordinator.engine import CoordinationError
 from execution_coordinator.github_state import GitHubApiError
 from execution_coordinator.model import (
     CoordinatorState,
@@ -165,6 +166,31 @@ class AgentWaitResumeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "fenced"):
             session.resume(idempotency_key="resume-after-fence")
 
+    def test_malformed_wait_response_fences_local_authority(self) -> None:
+        class MalformedWaitGateway(_Gateway):
+            def mutate(self, *, operation, payload, idempotency_key):
+                if operation == "wait":
+                    self.calls.append((operation, dict(payload), idempotency_key))
+                    return MutationResult(state=CoordinatorState.empty())
+                return super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+
+        gateway = MalformedWaitGateway()
+        session = self._running_session(gateway)
+
+        with self.assertRaises(AdapterProtocolError):
+            session.wait(
+                reason=WaitReason.DEPENDENCY,
+                evidence_ref="issue:42",
+                idempotency_key="wait-malformed",
+            )
+
+        self.assertIsNone(session.claim_id)
+        self.assertIsNone(session.generation)
+
     def test_changed_authority_resume_fences_local_session(self) -> None:
         class ChangedResumeGateway(_Gateway):
             def mutate(self, *, operation, payload, idempotency_key):
@@ -191,6 +217,32 @@ class AgentWaitResumeTests(unittest.TestCase):
 
         with self.assertRaises(AdapterProtocolError):
             session.resume(idempotency_key="resume-changed")
+
+        self.assertIsNone(session.claim_id)
+        self.assertIsNone(session.generation)
+
+    def test_stale_resume_failure_fences_local_session(self) -> None:
+        class StaleResumeGateway(_Gateway):
+            def mutate(self, *, operation, payload, idempotency_key):
+                if operation == "resume":
+                    self.calls.append((operation, dict(payload), idempotency_key))
+                    raise CoordinationError("stale generation")
+                return super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+
+        gateway = StaleResumeGateway()
+        session = self._running_session(gateway)
+        session.wait(
+            reason=WaitReason.PROVIDER,
+            evidence_ref="provider:waiting",
+            idempotency_key="wait-1",
+        )
+
+        with self.assertRaisesRegex(CoordinationError, "stale generation"):
+            session.resume(idempotency_key="resume-stale")
 
         self.assertIsNone(session.claim_id)
         self.assertIsNone(session.generation)
