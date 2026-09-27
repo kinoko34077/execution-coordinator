@@ -35,7 +35,15 @@ STATE_ISSUE_NUMBER=3 \
 python -m execution_coordinator.query get_state
 ```
 
-`GITHUB_TOKEN` is optional for publicly readable repositories and may be supplied for authenticated reads. The command emits the validated schema-v1 state as JSON. This surface does not discover or rank durable work; `list_claimable` remains a later bounded slice.
+`GITHUB_TOKEN` is optional for publicly readable repositories and may be supplied for authenticated reads. The command emits the validated schema-v1 state as JSON.
+
+## Read-only claimability projection
+
+`execution_coordinator.query.list_claimable()` is the first bounded Protocol v1 `list_claimable` groundwork. It accepts normalized `ClaimCandidate` values supplied by a canonical durable-state reader and filters them against the validated `CoordinatorState`.
+
+The projection excludes candidates that are not scope-ready, are durably blocked, require user confirmation, have no canonical entry reference, already have current same-task/role ownership, conflict with an incompatible active conflict key, or would create a same-worker implementer/reviewer conflict when `worker_id` is supplied.
+
+The projection is deterministic and preserves input order. It is intentionally not a ranking or scheduling surface: GitHub-wide Issue discovery/parsing, priority/dependency ranking, capability/environment matching, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
 
 ## Minimal agent bootstrap adapter
 
@@ -72,5 +80,3 @@ This adapter is deliberately not a scheduler, controller, repo-monitor, or full 
 - `kinoko34077/devflow#105` — parent Work Order
 - `kinoko34077/devflow#106` — Execution Coordination Protocol v1 specification work
 - `kinoko34077/devflow` — durable workflow/control authority
-
-No production claim implementation is included in the bootstrap commit.
