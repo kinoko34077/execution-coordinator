@@ -149,10 +149,10 @@ class AgentSession:
                 operation="acknowledge",
             )
             return result
-        except (CoordinationError, AdapterProtocolError):
-            # A failed acknowledge means this session no longer has a safe
-            # local authority assumption. Do not attempt compensating release:
-            # the remote claim is lease-bound and will expire if necessary.
+        except RuntimeError:
+            # A failed or ambiguous acknowledge means this session no longer
+            # has a safe local authority assumption. Do not attempt an
+            # unsafe compensating release: remote authority remains lease-bound.
             self._fence()
             raise
 
