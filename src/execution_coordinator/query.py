@@ -4,15 +4,90 @@ import argparse
 import json
 import os
 import sys
-from typing import Protocol
+from dataclasses import dataclass
+from typing import Iterable, Protocol
 
 from .github_state import GitHubApiError, GitHubStateStore
-from .model import CoordinatorState
+from .model import (
+    CoordinatorState,
+    Role,
+    roles_can_share_conflict_key,
+    same_worker_role_conflict,
+)
 from .snapshot import parse_issue_body, state_to_data
 
 
 class StateReader(Protocol):
     def load_body(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimCandidate:
+    """Normalized durable-work candidate for read-only eligibility projection.
+
+    The caller remains responsible for deriving these fields from canonical
+    devflow / owning-repository state. This object is not a durable task store.
+    """
+
+    task: str
+    role: Role
+    entry_ref: str | None
+    conflict_keys: tuple[str, ...] = ()
+    scope_ready: bool = True
+    blocked: bool = False
+    requires_user_confirmation: bool = False
+
+
+def _candidate_has_runtime_conflict(
+    candidate: ClaimCandidate,
+    state: CoordinatorState,
+    *,
+    worker_id: str | None,
+) -> bool:
+    candidate_keys = set(candidate.conflict_keys)
+    for active in state.claims.values():
+        if active.task == candidate.task and active.role == candidate.role:
+            return True
+        if worker_id is not None and same_worker_role_conflict(
+            active,
+            task=candidate.task,
+            role=candidate.role,
+            worker_id=worker_id,
+        ):
+            return True
+        if (
+            candidate_keys.intersection(active.conflict_keys)
+            and not roles_can_share_conflict_key(active.role, candidate.role)
+        ):
+            return True
+    return False
+
+
+def list_claimable(
+    candidates: Iterable[ClaimCandidate],
+    state: CoordinatorState,
+    *,
+    worker_id: str | None = None,
+) -> tuple[ClaimCandidate, ...]:
+    """Return candidates that remain eligible against current runtime state.
+
+    This is a deterministic, read-only projection. Durable discovery/parsing,
+    ranking, capability matching, scheduling, and claim mutation stay outside
+    this bounded surface.
+    """
+
+    claimable: list[ClaimCandidate] = []
+    for candidate in candidates:
+        if not candidate.scope_ready:
+            continue
+        if candidate.blocked or candidate.requires_user_confirmation:
+            continue
+        if not candidate.entry_ref or not candidate.entry_ref.strip():
+            continue
+        if _candidate_has_runtime_conflict(candidate, state, worker_id=worker_id):
+            continue
+        claimable.append(candidate)
+    return tuple(claimable)
 
 
 def get_state(store: StateReader) -> CoordinatorState:
