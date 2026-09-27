@@ -296,6 +296,15 @@ def _parse_entry_ref(value: object) -> tuple[str, str, int]:
     return repository, match.group(3), int(match.group(4))
 
 
+def _reject_duplicate_json_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"candidate marker JSON contains duplicate key: {key}")
+        result[key] = value
+    return result
+
+
 def _parse_marker(body: str) -> _CandidateMarker | None:
     begin_count = body.count(MARKER_BEGIN)
     end_count = body.count(MARKER_END)
@@ -312,7 +321,7 @@ def _parse_marker(body: str) -> _CandidateMarker | None:
     if not raw:
         raise ValueError("candidate marker JSON is empty")
     try:
-        payload = json.loads(raw)
+        payload = json.loads(raw, object_pairs_hook=_reject_duplicate_json_keys)
     except json.JSONDecodeError as exc:
         raise ValueError("candidate marker JSON is malformed") from exc
     if not isinstance(payload, dict):
