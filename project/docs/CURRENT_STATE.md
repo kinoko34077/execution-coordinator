@@ -187,4 +187,4 @@ This is direct operational evidence that the default-main serialized mutation pa
 
 ## Next action
 
-`Issue #9 / PR #13 acknowledge-before-work lifecycle conformance is accepted on main \\`66bc5bad0176181f72b67e08dd89af349155c874\\`. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
+`Issue #9 / PR #13 acknowledge-before-work lifecycle conformance is accepted on main `66bc5bad0176181f72b67e08dd89af349155c874`. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
