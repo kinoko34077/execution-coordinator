@@ -91,6 +91,24 @@ class AgentSession:
             raise AdapterProtocolError("mutation response did not return claim authority")
         return result.claim_id, result.generation
 
+    @classmethod
+    def _require_same_authority(
+        cls,
+        result: MutationResult,
+        *,
+        claim_id: str,
+        generation: int,
+        operation: str,
+    ) -> None:
+        try:
+            returned_claim_id, returned_generation = cls._require_authority(result)
+        except (TypeError, AttributeError, AdapterProtocolError) as exc:
+            raise AdapterProtocolError(
+                f"{operation} response did not return usable claim authority"
+            ) from exc
+        if (returned_claim_id, returned_generation) != (claim_id, generation):
+            raise AdapterProtocolError(f"{operation} response changed claim authority")
+
     def claim(self, *, idempotency_key: str) -> MutationResult:
         self._ensure_claimable()
         result = self._gateway.mutate(
@@ -122,9 +140,12 @@ class AgentSession:
                 payload={"claim_id": claim_id, "generation": generation},
                 idempotency_key=idempotency_key,
             )
-            returned_claim_id, returned_generation = self._require_authority(result)
-            if (returned_claim_id, returned_generation) != (claim_id, generation):
-                raise RuntimeError("renew response changed claim authority")
+            self._require_same_authority(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="renew",
+            )
             return result
         except (CoordinationError, AdapterProtocolError):
             self._fence()
@@ -140,9 +161,12 @@ class AgentSession:
                 payload={"claim_id": claim_id, "generation": generation},
                 idempotency_key=idempotency_key,
             )
-            returned_claim_id, returned_generation = self._require_authority(result)
-            if (returned_claim_id, returned_generation) != (claim_id, generation):
-                raise RuntimeError("release response changed claim authority")
+            self._require_same_authority(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="release",
+            )
         except (CoordinationError, AdapterProtocolError):
             self._fence()
             raise

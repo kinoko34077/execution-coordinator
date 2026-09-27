@@ -197,6 +197,38 @@ class AgentSessionTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             session.release(idempotency_key="release-after-fence")
 
+    def test_changed_authority_response_fences_session(self) -> None:
+        class ChangedAuthorityGateway(_Gateway):
+            def mutate(
+                self,
+                *,
+                operation: str,
+                payload: dict[str, object],
+                idempotency_key: str,
+            ) -> MutationResult:
+                result = super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+                if operation == "renew":
+                    return MutationResult(
+                        claim_id="clm_other",
+                        generation=99,
+                        state=result.state,
+                    )
+                return result
+
+        gateway = ChangedAuthorityGateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+
+        with self.assertRaises(AdapterProtocolError):
+            session.renew(idempotency_key="renew-changed-authority")
+        self.assertIsNone(session.claim_id)
+        with self.assertRaisesRegex(RuntimeError, "fenced"):
+            session.release(idempotency_key="release-after-fence")
+
 
 if __name__ == "__main__":
     unittest.main()
