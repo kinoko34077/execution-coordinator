@@ -2,17 +2,18 @@
 
 ## Repository state
 
-`V0.1 OPERATIONAL / ACCEPTED`
+`V0.1 + PHASE 3 ADAPTER OPERATIONAL / ACCEPTED`
 
 `execution-coordinator` is the separate runtime implementation boundary for devflow Execution Coordination Protocol v1.
 
-Accepted default `main` is `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f`, merged from PR #2 after current-head review and exact-head verification. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
+Accepted default `main` is `1210b506ad1565159d0fb5d934eca66ca166542a`, after runtime PR #2 merged as `ed5ed58fab79c161cacdbdb9b7dfd421209bec6f`, state-reconciliation PR #4 merged as `238ffb9d8a7f51d0416fd0d3f9b96f1e4fb17944`, and Phase 3 bootstrap-adapter PR #6 merged as `1210b506ad1565159d0fb5d934eca66ca166542a`. The canonical protocol was accepted first in `kinoko34077/devflow` PR #108 and is present on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
 
 Cross-repository authority remains:
 - devflow Work Order #105 owns the broader multi-agent execution-coordination objective;
 - devflow protocol/spec Issue #106 / merged PR #108 owns Protocol v1 semantics;
 - devflow Repository Control #107 is the cross-repository index;
 - repository Issue #1 / merged PR #2 own the v0.1 runtime implementation evidence;
+- repository Issue #5 / merged PR #6 own the accepted Phase 3 agent-bootstrap adapter evidence;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 ## Accepted v0.1 behavior
@@ -110,6 +111,15 @@ Contract:
 - mutation job has a `refs/heads/main` misuse guard;
 - that main-ref guard is not an independent authorization boundary.
 
+### Agent bootstrap adapter (Phase 3)
+
+- `AgentSession` provides the bounded `claim -> callback/work -> renew -> release` integration path;
+- implementation callback execution is refused unless claim acquisition succeeds;
+- current `claim_id` / `generation` are retained and forwarded to renew/release;
+- stale-generation, malformed-authority, and changed-authority responses fence the local adapter session;
+- release is explicit and repeated release is idempotent at the adapter boundary;
+- the adapter does not discover/rank tasks and does not create scheduler/controller authority;
+- merged-main adapter smoke completed with `tests.test_agent` 8/8 PASS and Issue #3 returned to `claims: {}`.
 ## Review-policy boundary
 
 - `worker_id` is runtime coordination metadata supplied by the client, not a cryptographic identity or GitHub security principal;
@@ -131,6 +141,10 @@ Contract:
 - bounded real claim smoke on merged main: mutation run `36266294818` PASS;
 - bounded release smoke on merged main: mutation run `36266348606` PASS;
 - Issue #3 after release has `claims: {}` and retains generation/idempotency evidence for the completed smoke.
+- Phase 3 adapter PR #6 exact-head Verify `36286688553` PASS on implementation head `882ec136d0540ee806035199dbcfb66c889e1df5`;
+- PR #6 merged as current main `1210b506ad1565159d0fb5d934eca66ca166542a`;
+- post-merge main Verify `36286744337` PASS;
+- merged-main adapter smoke: `tests.test_agent` 8/8 PASS and Issue #3 remained `claims: {}`.
 
 This is direct operational evidence that the default-main serialized mutation path can commit and release one bounded synthetic claim without leaving active authority behind.
 
@@ -143,7 +157,7 @@ This is direct operational evidence that the default-main serialized mutation pa
 - Issue PATCH response equality remains an additional success check and has not been exercised against hypothetical GitHub body normalization;
 - one global queue is intentionally coarse; fine-grained lanes and external storage are deferred;
 - Protocol v1 includes richer `claim(..., expected_state, idempotency_key)` / bounded failure-evidence concepts than the current v0.1 CLI exposes. This is a deferred runtime-conformance gap, not evidence that the accepted v0.1 claim/lease slice implements the full future protocol surface;
-- automatic task discovery/ranking, agent bootstrap automation, controller-side negotiation, and repo-monitor projection are not yet implemented.
+- automatic task discovery/ranking, controller-side negotiation, and repo-monitor projection are not yet implemented; the accepted bootstrap adapter is caller-driven and is not a scheduler.
 
 ## Safety / authority boundary
 
@@ -155,4 +169,4 @@ This is direct operational evidence that the default-main serialized mutation pa
 
 ## Next action
 
-`Reconcile repository Issue #1 and devflow Control #107 to the accepted v0.1 main/smoke evidence. Continue later execution-coordination phases only through devflow #105 and bounded repository-local Issues; do not treat v0.1 as full controller/agent negotiation implementation.`
+`Issue #5 / PR #6 Phase 3 bootstrap adapter is accepted on main. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
