@@ -27,6 +27,11 @@
 - merged-main claim smoke `36266294818` — PASS.
 - merged-main release smoke `36266348606` — PASS; Issue #3 returns to no active claims.
 
+## Phase 3 follow-up candidate
+
+- Issue #10 — extends the accepted acknowledge-before-work adapter over existing progress/wait/resume/fail runtime operations.
+- The candidate is not accepted until exact-head CI, formal Review, merge, post-merge Verify, and merged-main smoke complete.
+
 ## External canonical references
 
 - devflow Work Order `#105` — parent multi-agent execution coordination objective and later-phase authority.
