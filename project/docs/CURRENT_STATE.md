@@ -131,6 +131,14 @@ Contract:
 - caller-supplied claim, acknowledge, renew, and release idempotency keys remain explicit and are not generated or replaced by the adapter;
 - discovery/ranking, automatic scheduling, controller negotiation, repo-monitor projection, and new durable state remain out of scope.
 
+### Issue #10 follow-up candidate lifecycle coverage
+
+- `AgentSession` adds adapter forwarding for existing `progress`, evidence-backed `wait`, explicit `resume`, and terminal `fail` operations;
+- live responses are checked for the current claim/generation and expected execution state;
+- terminal responses must remove the claim before local authority is cleared;
+- callback exceptions remain primary while release cleanup failures are retained as exception notes;
+- focused follow-up evidence is 15/15 tests and remains a candidate until exact-head CI, formal Review, merge, and post-merge smoke complete.
+
 ## Review-policy boundary
 
 - `worker_id` is runtime coordination metadata supplied by the client, not a cryptographic identity or GitHub security principal;
