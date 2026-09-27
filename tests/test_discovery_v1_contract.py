@@ -350,6 +350,20 @@ class DurableCandidateControlProjectionTests(unittest.TestCase):
         self.assertEqual(result.candidates, ())
         self.assertIn("entry_ref", result.failures[0].reason)
 
+    def test_invalid_conflict_key_fails_closed(self) -> None:
+        task_body = "task"
+        candidate = _envelope(task_number=7, task_body=task_body)
+        candidate["conflict_keys"] = ["not-a-protocol-key"]
+        reader = self._reader(
+            block=_block(candidates=[candidate]),
+            task_documents={7: _doc("owner/repo", 7, task_body)},
+        )
+
+        result = discover_claim_candidates((CONTROL,), reader)
+
+        self.assertEqual(result.candidates, ())
+        self.assertIn("conflict_keys", result.failures[0].reason)
+
     def test_multiple_distinct_task_envelopes_are_emitted_and_invalid_sibling_invalidates_source(self) -> None:
         body7, body8 = "task 7", "task 8"
         candidates = [
