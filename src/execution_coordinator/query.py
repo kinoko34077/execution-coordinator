@@ -77,6 +77,7 @@ def list_claimable(
     """
 
     claimable: list[ClaimCandidate] = []
+    seen_task_roles: set[tuple[str, Role]] = set()
     for candidate in candidates:
         if not candidate.scope_ready:
             continue
@@ -86,6 +87,10 @@ def list_claimable(
             continue
         if _candidate_has_runtime_conflict(candidate, state, worker_id=worker_id):
             continue
+        task_role = (candidate.task, candidate.role)
+        if task_role in seen_task_roles:
+            continue
+        seen_task_roles.add(task_role)
         claimable.append(candidate)
     return tuple(claimable)
 
