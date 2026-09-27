@@ -5,10 +5,13 @@ import json
 import os
 import sys
 from dataclasses import dataclass
+from datetime import datetime
+from enum import StrEnum
 from typing import Iterable, Protocol
 
 from .github_state import GitHubApiError, GitHubStateStore, IssueBodyRead
 from .model import (
+    Claim,
     CoordinatorState,
     Role,
     roles_can_share_conflict_key,
@@ -46,29 +49,62 @@ class ClaimCandidate:
     requires_user_confirmation: bool = False
 
 
-def _candidate_has_runtime_conflict(
+class ClaimabilityReason(StrEnum):
+    CLAIMABLE = "CLAIMABLE"
+    BLOCKED_LIVE = "BLOCKED_LIVE"
+    EXPIRED_UNSWEPT = "EXPIRED_UNSWEPT"
+
+
+@dataclass(frozen=True, slots=True)
+class ClaimabilityProjection:
+    candidate: ClaimCandidate
+    reason: ClaimabilityReason
+
+
+def _candidate_is_durably_eligible(candidate: ClaimCandidate) -> bool:
+    return (
+        candidate.scope_ready
+        and not candidate.blocked
+        and not candidate.requires_user_confirmation
+        and bool(candidate.entry_ref and candidate.entry_ref.strip())
+    )
+
+
+def _candidate_runtime_blockers(
     candidate: ClaimCandidate,
     state: CoordinatorState,
     *,
     worker_id: str | None,
-) -> bool:
+) -> tuple[Claim, ...]:
+    blockers: list[Claim] = []
     candidate_keys = set(candidate.conflict_keys)
     for active in state.claims.values():
         if active.task == candidate.task and active.role == candidate.role:
-            return True
+            blockers.append(active)
+            continue
         if worker_id is not None and same_worker_role_conflict(
             active,
             task=candidate.task,
             role=candidate.role,
             worker_id=worker_id,
         ):
-            return True
+            blockers.append(active)
+            continue
         if (
             candidate_keys.intersection(active.conflict_keys)
             and not roles_can_share_conflict_key(active.role, candidate.role)
         ):
-            return True
-    return False
+            blockers.append(active)
+    return tuple(blockers)
+
+
+def _candidate_has_runtime_conflict(
+    candidate: ClaimCandidate,
+    state: CoordinatorState,
+    *,
+    worker_id: str | None,
+) -> bool:
+    return bool(_candidate_runtime_blockers(candidate, state, worker_id=worker_id))
 
 
 def list_claimable(
@@ -81,17 +117,14 @@ def list_claimable(
 
     This is a deterministic, read-only projection. Durable discovery/parsing,
     ranking, capability matching, scheduling, and claim mutation stay outside
-    this bounded surface.
+    this bounded surface. Expired-but-unswept claims remain blockers until the
+    serialized expire mutation commits an updated state snapshot.
     """
 
     claimable: list[ClaimCandidate] = []
     seen_task_roles: set[tuple[str, Role]] = set()
     for candidate in candidates:
-        if not candidate.scope_ready:
-            continue
-        if candidate.blocked or candidate.requires_user_confirmation:
-            continue
-        if not candidate.entry_ref or not candidate.entry_ref.strip():
+        if not _candidate_is_durably_eligible(candidate):
             continue
         if _candidate_has_runtime_conflict(candidate, state, worker_id=worker_id):
             continue
@@ -101,6 +134,45 @@ def list_claimable(
         seen_task_roles.add(task_role)
         claimable.append(candidate)
     return tuple(claimable)
+
+
+def project_claimability(
+    candidates: Iterable[ClaimCandidate],
+    state: CoordinatorState,
+    *,
+    now: datetime,
+    worker_id: str | None = None,
+) -> tuple[ClaimabilityProjection, ...]:
+    """Explain runtime claimability without changing claim authority.
+
+    Only durably eligible candidates participate. A current snapshot blocker
+    remains authoritative even after its lease time elapses; this projection
+    merely distinguishes whether an explicit expire sweep is the useful next
+    action. It never removes or mutates a claim.
+    """
+
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("now must be timezone-aware")
+
+    projected: list[ClaimabilityProjection] = []
+    seen_task_roles: set[tuple[str, Role]] = set()
+    for candidate in candidates:
+        if not _candidate_is_durably_eligible(candidate):
+            continue
+        task_role = (candidate.task, candidate.role)
+        if task_role in seen_task_roles:
+            continue
+        seen_task_roles.add(task_role)
+
+        blockers = _candidate_runtime_blockers(candidate, state, worker_id=worker_id)
+        if not blockers:
+            reason = ClaimabilityReason.CLAIMABLE
+        elif any(blocker.lease_until > now for blocker in blockers):
+            reason = ClaimabilityReason.BLOCKED_LIVE
+        else:
+            reason = ClaimabilityReason.EXPIRED_UNSWEPT
+        projected.append(ClaimabilityProjection(candidate=candidate, reason=reason))
+    return tuple(projected)
 
 
 def get_state(store: StateReader) -> CoordinatorState:
