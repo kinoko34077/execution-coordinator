@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
-from execution_coordinator.agent import AgentSession
+from execution_coordinator.agent import AdapterProtocolError, AgentSession
 from execution_coordinator.engine import CoordinationError
 from execution_coordinator.model import CoordinatorState, MutationResult, Role
 from execution_coordinator.mutate import apply_mutation
@@ -32,6 +32,7 @@ class _Store:
 class _Gateway:
     def __init__(self) -> None:
         self.store = _Store()
+        self.now = T0
         self.calls: list[tuple[str, dict[str, object], str]] = []
 
     def mutate(
@@ -47,7 +48,7 @@ class _Gateway:
             operation=operation,
             payload=payload,
             idempotency_key=idempotency_key,
-            now=T0,
+            now=self.now,
         )
 
 
@@ -126,6 +127,88 @@ class AgentAcknowledgeTests(unittest.TestCase):
 
         self.assertEqual([], entered)
         self.assertIsNone(session.claim_id)
+
+    def test_stale_generation_acknowledge_fences_session(self) -> None:
+        gateway = _Gateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+        gateway.now = T0 + timedelta(minutes=16)
+        apply_mutation(
+            gateway.store,
+            operation="expire",
+            payload={},
+            idempotency_key="expire-1",
+            now=gateway.now,
+        )
+
+        with self.assertRaises(CoordinationError):
+            session.acknowledge(idempotency_key="ack-stale")
+
+        self.assertIsNone(session.claim_id)
+        with self.assertRaisesRegex(RuntimeError, "fenced"):
+            session.release(idempotency_key="release-after-fence")
+
+    def test_malformed_acknowledge_response_fences_session(self) -> None:
+        class MalformedAcknowledgeGateway(_Gateway):
+            def mutate(
+                self,
+                *,
+                operation: str,
+                payload: dict[str, object],
+                idempotency_key: str,
+            ) -> MutationResult:
+                if operation == "acknowledge":
+                    self.calls.append((operation, dict(payload), idempotency_key))
+                    return MutationResult(state=CoordinatorState.empty())
+                return super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+
+        gateway = MalformedAcknowledgeGateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+
+        with self.assertRaises(AdapterProtocolError):
+            session.acknowledge(idempotency_key="ack-malformed")
+
+        self.assertIsNone(session.claim_id)
+        with self.assertRaisesRegex(RuntimeError, "fenced"):
+            session.release(idempotency_key="release-after-fence")
+
+    def test_changed_authority_acknowledge_response_fences_session(self) -> None:
+        class ChangedAuthorityGateway(_Gateway):
+            def mutate(
+                self,
+                *,
+                operation: str,
+                payload: dict[str, object],
+                idempotency_key: str,
+            ) -> MutationResult:
+                result = super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+                if operation == "acknowledge":
+                    return MutationResult(
+                        claim_id="clm_other",
+                        generation=99,
+                        state=result.state,
+                    )
+                return result
+
+        gateway = ChangedAuthorityGateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+
+        with self.assertRaises(AdapterProtocolError):
+            session.acknowledge(idempotency_key="ack-changed")
+
+        self.assertIsNone(session.claim_id)
+        with self.assertRaisesRegex(RuntimeError, "fenced"):
+            session.release(idempotency_key="release-after-fence")
 
 
 if __name__ == "__main__":
