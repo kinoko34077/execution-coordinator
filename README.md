@@ -40,13 +40,16 @@ session = AgentSession(
 )
 
 session.run(
-    lambda active: implement_after_claim(active),
+    lambda active: implement_after_acknowledge(active),
     claim_idempotency_key="task-123-claim-1",
+    acknowledge_idempotency_key="task-123-ack-1",
     release_idempotency_key="task-123-release-1",
 )
 ```
 
-The callback is not entered unless the claim succeeds. The adapter forwards the current claim ID/generation for `renew` and `release`, fences the local session after stale-generation or malformed-authority responses, and leaves intentional external waits to the caller: release the claim before waiting when safe, then claim again through the normal authority path.
+The callback is not entered unless both claim and `acknowledge` succeed. The canonical adapter lifecycle is `claim -> acknowledge (CLAIMED -> RUNNING) -> work/renew -> release`. The adapter forwards the current claim ID/generation for `acknowledge`, `renew`, and `release`, and fences the local session after stale-generation or malformed/changed-authority responses.
+
+If an acknowledge response is rejected or cannot prove the same current authority, the adapter does not enter work and does not invent a compensating release while ownership is ambiguous. The local session is fenced; any remote claim that cannot safely be released remains governed by the existing lease and expiry rules. Intentional external waits remain caller-managed: release the claim before waiting when safe, then claim again through the normal authority path.
 
 This adapter is deliberately not a scheduler, controller, repo-monitor, or full Protocol v1 expected-state/failure-evidence implementation.
 
