@@ -7,7 +7,7 @@ import sys
 from dataclasses import dataclass
 from typing import Iterable, Protocol
 
-from .github_state import GitHubApiError, GitHubStateStore
+from .github_state import GitHubApiError, GitHubStateStore, IssueBodyRead
 from .model import (
     CoordinatorState,
     Role,
@@ -19,6 +19,14 @@ from .snapshot import parse_issue_body, state_to_data
 
 class StateReader(Protocol):
     def load_body(self) -> str: ...
+
+
+@dataclass(frozen=True, slots=True)
+class StateReadResult:
+    """Validated runtime state plus optional transport-source freshness metadata."""
+
+    state: CoordinatorState
+    source_updated_at: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,11 +106,29 @@ def list_claimable(
 def get_state(store: StateReader) -> CoordinatorState:
     """Load and validate the current execution-coordination snapshot.
 
-    This path is intentionally read-only: it never patches the system Issue,
-    appends lifecycle comments, or enters the serialized mutation lane.
+    This compatibility path remains intentionally read-only and returns only
+    runtime authority state, without transport-source metadata.
     """
 
     return parse_issue_body(store.load_body())
+
+
+def get_state_result(store: StateReader) -> StateReadResult:
+    """Load validated state plus freshness metadata when the reader exposes it."""
+
+    load_with_metadata = getattr(store, "load_body_with_metadata", None)
+    if callable(load_with_metadata):
+        source = load_with_metadata()
+        if not isinstance(source, IssueBodyRead):
+            raise RuntimeError("metadata-bearing state read returned an invalid result")
+        return StateReadResult(
+            state=parse_issue_body(source.body),
+            source_updated_at=source.updated_at,
+        )
+    return StateReadResult(
+        state=parse_issue_body(store.load_body()),
+        source_updated_at=None,
+    )
 
 
 def _build_store_from_env() -> GitHubStateStore:
@@ -132,12 +158,14 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.operation != "get_state":
             raise ValueError(f"unsupported query operation: {args.operation}")
-        state = get_state(_build_store_from_env())
+        result = get_state_result(_build_store_from_env())
     except (ValueError, GitHubApiError, RuntimeError) as exc:
         print(f"query failed: {exc}", file=sys.stderr)
         return 2
 
-    print(json.dumps(state_to_data(state), sort_keys=True))
+    payload = state_to_data(result.state)
+    payload["source_updated_at"] = result.source_updated_at
+    print(json.dumps(payload, sort_keys=True))
     return 0
 
 
