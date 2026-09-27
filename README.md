@@ -39,36 +39,37 @@ python -m execution_coordinator.query get_state
 
 ## Read-only durable Issue discovery
 
-`execution_coordinator.discovery.discover_claim_candidates()` implements the exact-reference consumer side of the accepted devflow durable-candidate source contract (`devflow#125` / merged PR #126).
+\`execution_coordinator.discovery.discover_claim_candidates()\` consumes the accepted devflow durable-candidate source contract (\`devflow#125\` / merged PR #132). Each input is the exact Repository Control identity returned by live bootstrap; the adapter reads one explicit \`DEVFLOW_EXECUTION_CANDIDATES_V1\` block and then fetches only the exact task Issues named by that block.
 
-The caller supplies only exact owning Issue identities through `DurableIssueSource(repository, issue_number)`. It does **not** choose candidate role, eligible Work Status, conflict keys, readiness, blocker state, or confirmation state. Those fields come only from the versioned v1 marker already published in the owning Issue:
+The canonical projection is a task envelope with common task-level gates and one or more role entries:
 
-```text
-<!-- DEVFLOW_EXECUTION_CANDIDATE_V1_BEGIN -->
+\`\`\`text
+<!-- DEVFLOW_EXECUTION_CANDIDATES_V1_BEGIN -->
 {
   "schema_version": 1,
-  "task_ref": "owner/repository#123",
-  "entry_ref": "https://github.com/owner/repository/issues/123",
-  "role": "implementer",
-  "scope_ready": true,
-  "blocked": false,
-  "requires_user_confirmation": false,
-  "conflict_keys": ["component:owner/repository:parser"],
-  "provenance": {
-    "control_ref": "kinoko34077/devflow#17",
-    "work_order_ref": "kinoko34077/devflow#105"
-  }
+  "source_ref": "kinoko34077/devflow#107",
+  "repository": "owner/repository",
+  "candidates": [
+    {
+      "task": "owner/repository#123",
+      "task_body_sha256": "sha256:<64 lowercase hex characters>",
+      "task_work_status": "READY_FOR_IMPLEMENTATION",
+      "entry_ref": "https://github.com/owner/repository/issues/123",
+      "scope_ready": true,
+      "blocked": false,
+      "requires_user_confirmation": false,
+      "roles": [
+        {"role": "implementer", "next_action_tag": "IMPLEMENT"}
+      ]
+    }
+  ]
 }
-<!-- DEVFLOW_EXECUTION_CANDIDATE_V1_END -->
-```
+<!-- DEVFLOW_EXECUTION_CANDIDATES_V1_END -->
+\`\`\`
 
-Marker absence is valid and simply means the Issue is not machine-discoverable. Duplicate/partial/malformed markers, unsupported schema/fields/roles, task identity mismatches, invalid entries, or invalid provenance fail closed as `DiscoveryFailure` records.
+The consumer verifies the trusted Control, active Repository State, current Control-level user/Human vetoes, exact owning-task identity, trusted author association, non-empty task body, canonical SHA-256 body digest, structural Work Order provenance, exact task entry URL, duplicate-task/duplicate-role rejection, and the role/status/action matrix. Task-level lifecycle, freshness, scope, blocker and confirmation fields are shared by all roles in one envelope.
 
-`control_ref` is resolved read-only against the current devflow Repository Control. Control Work Status is a guard rather than source authority: ordinary implementer discovery requires `READY_FOR_IMPLEMENTATION`; reviewer/verifier/integrator require `AWAITING_REVIEW`. Current `[USER_DECISION]` and compatibility `[HUMAN_GATE]` evidence vetoes a marker that incorrectly claims `requires_user_confirmation=false`. Optional `work_order_ref` must resolve structurally to an open devflow `[WORK ORDER]` Issue.
-
-The marker's explicit `entry_ref` may identify an open Issue or Pull Request in the same owning repository. The adapter never searches for a substitute entry and never derives candidate authority from local Objective/Scope/Acceptance prose, Project fields, branch/PR existence, Issue age, or missing runtime claims. In particular, interrupted `IMPLEMENTING` work is not rediscovered as fresh ordinary work; recovery/takeover remains a separate future contract.
-
-`GitHubIssueReader` performs GET-only reads. Discovery does not mutate owning Issues, devflow Controls/Work Orders, runtime Issue #3, or submit claims. GitHub-wide frontier selection, ranking, capability matching, automatic claim submission, controller negotiation, repo-monitor projection, and recovery remain later bounded slices.
+The deprecated owning-Issue \`DEVFLOW_EXECUTION_CANDIDATE_V1\` marker is ignored and never used as fallback authority. Malformed, stale, contradictory or untrusted evidence fails closed. Discovery is GET-only: it does not publish/refresh Control projections, mutate Issues or runtime Issue #3, rank work, schedule workers, submit claims, or recover interrupted \`IMPLEMENTING\` work.
 
 ## Read-only claimability projection
 
