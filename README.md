@@ -39,11 +39,36 @@ python -m execution_coordinator.query get_state
 
 ## Read-only durable Issue discovery
 
-`execution_coordinator.discovery.discover_claim_candidates()` adds the first bounded canonical-Issue discovery/normalization layer. The caller supplies exact owning-repository Issue references, requested role, the Work Status values eligible for that role, and any conflict keys. `GitHubIssueReader` performs GET-only reads and never mutates Issues or runtime state.
+`execution_coordinator.discovery.discover_claim_candidates()` implements the exact-reference consumer side of the accepted devflow durable-candidate source contract (`devflow#125` / merged PR #126).
 
-Normalization is deliberately strict. A source must resolve to an open Issue rather than a pull request, have exactly one supported `Work Status`, and contain non-empty Objective, Scope/Design scope, and Acceptance criteria sections. `[USER_DECISION]` is recognized only from the explicit Next Action section; `BLOCKED` is derived only from the explicit Work Status. Malformed or ambiguous sources are returned as `DiscoveryFailure` records instead of being silently treated as claimable.
+The caller supplies only exact owning Issue identities through `DurableIssueSource(repository, issue_number)`. It does **not** choose candidate role, eligible Work Status, conflict keys, readiness, blocker state, or confirmation state. Those fields come only from the versioned v1 marker already published in the owning Issue:
 
-The adapter does not infer role from Work Status and does not embed a role-to-state policy table. GitHub-wide search, arbitrary free-form Issue parsing, priority/dependency ranking, capability matching, automatic claim submission, controller negotiation, and repo-monitor projection remain separate later slices.
+```text
+<!-- DEVFLOW_EXECUTION_CANDIDATE_V1_BEGIN -->
+{
+  "schema_version": 1,
+  "task_ref": "owner/repository#123",
+  "entry_ref": "https://github.com/owner/repository/issues/123",
+  "role": "implementer",
+  "scope_ready": true,
+  "blocked": false,
+  "requires_user_confirmation": false,
+  "conflict_keys": ["component:owner/repository:parser"],
+  "provenance": {
+    "control_ref": "kinoko34077/devflow#17",
+    "work_order_ref": "kinoko34077/devflow#105"
+  }
+}
+<!-- DEVFLOW_EXECUTION_CANDIDATE_V1_END -->
+```
+
+Marker absence is valid and simply means the Issue is not machine-discoverable. Duplicate/partial/malformed markers, unsupported schema/fields/roles, task identity mismatches, invalid entries, or invalid provenance fail closed as `DiscoveryFailure` records.
+
+`control_ref` is resolved read-only against the current devflow Repository Control. Control Work Status is a guard rather than source authority: ordinary implementer discovery requires `READY_FOR_IMPLEMENTATION`; reviewer/verifier/integrator require `AWAITING_REVIEW`. Current `[USER_DECISION]` and compatibility `[HUMAN_GATE]` evidence vetoes a marker that incorrectly claims `requires_user_confirmation=false`. Optional `work_order_ref` must resolve structurally to an open devflow `[WORK ORDER]` Issue.
+
+The marker's explicit `entry_ref` may identify an open Issue or Pull Request in the same owning repository. The adapter never searches for a substitute entry and never derives candidate authority from local Objective/Scope/Acceptance prose, Project fields, branch/PR existence, Issue age, or missing runtime claims. In particular, interrupted `IMPLEMENTING` work is not rediscovered as fresh ordinary work; recovery/takeover remains a separate future contract.
+
+`GitHubIssueReader` performs GET-only reads. Discovery does not mutate owning Issues, devflow Controls/Work Orders, runtime Issue #3, or submit claims. GitHub-wide frontier selection, ranking, capability matching, automatic claim submission, controller negotiation, repo-monitor projection, and recovery remain later bounded slices.
 
 ## Read-only claimability projection
 
@@ -87,4 +112,5 @@ This adapter is deliberately not a scheduler, controller, repo-monitor, or full 
 
 - `kinoko34077/devflow#105` — parent Work Order
 - `kinoko34077/devflow#106` — Execution Coordination Protocol v1 specification work
+- `kinoko34077/devflow#125` / PR #126 — accepted durable-candidate source contract v1
 - `kinoko34077/devflow` — durable workflow/control authority
