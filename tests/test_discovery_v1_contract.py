@@ -178,6 +178,52 @@ class DurableCandidateV1ContractTests(unittest.TestCase):
         self.assertIn("unknown", reasons.lower())
         self.assertIn("task_ref", reasons)
 
+    def test_duplicate_json_keys_fail_closed_at_top_level_and_provenance(self) -> None:
+        api = self._api()
+        top_level = (
+            f"{BEGIN}\n"
+            '{"schema_version":1,"task_ref":"owner/repo#1",'
+            '"entry_ref":"https://github.com/owner/repo/issues/1",'
+            '"role":"reviewer","role":"implementer",'
+            '"scope_ready":true,"blocked":false,'
+            '"requires_user_confirmation":false,'
+            '"provenance":{"control_ref":"kinoko34077/devflow#17"}}'
+            f"\n{END}"
+        )
+        provenance = (
+            f"{BEGIN}\n"
+            '{"schema_version":1,"task_ref":"owner/repo#2",'
+            '"entry_ref":"https://github.com/owner/repo/issues/2",'
+            '"role":"implementer","scope_ready":true,"blocked":false,'
+            '"requires_user_confirmation":false,'
+            '"provenance":{"control_ref":"kinoko34077/devflow#999",'
+            '"control_ref":"kinoko34077/devflow#17"}}'
+            f"\n{END}"
+        )
+        sources = (
+            api.DurableIssueSource("owner/repo", 1),
+            api.DurableIssueSource("owner/repo", 2),
+        )
+        reader = _Reader(
+            {
+                ("owner/repo", 1): self._doc(api, "owner/repo", 1, top_level),
+                ("owner/repo", 2): self._doc(api, "owner/repo", 2, provenance),
+                ("kinoko34077/devflow", 17): self._doc(
+                    api,
+                    "kinoko34077/devflow",
+                    17,
+                    _control_body(),
+                    title="[REPO] repo",
+                ),
+            }
+        )
+
+        result = api.discover_claim_candidates(sources, reader)
+
+        self.assertEqual(result.candidates, ())
+        self.assertEqual(len(result.failures), 2)
+        self.assertTrue(all("duplicate" in failure.reason.lower() for failure in result.failures))
+
     def test_control_status_is_guard_and_implementing_is_not_fresh_discovery(self) -> None:
         api = self._api()
         source = api.DurableIssueSource(repository="owner/repo", issue_number=7)
