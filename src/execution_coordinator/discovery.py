@@ -41,6 +41,12 @@ _ENTRY_REF = re.compile(
     r"^https://github\.com/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/issues/([1-9][0-9]*)$"
 )
 _DIGEST = re.compile(r"^sha256:[0-9a-f]{64}$")
+_CONFLICT_KEY = re.compile(
+    r"^(repo:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+|"
+    r"component:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.:/-]+|"
+    r"path-group:[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.:/-]+|"
+    r"(contract|schema|workflow):[A-Za-z0-9_.:/-]+)$"
+)
 _HEADING = re.compile(r"^##\s+(.+?)\s*$")
 
 _ROLE_ACTIONS: dict[Role, dict[str, frozenset[str]]] = {
@@ -359,6 +365,8 @@ def _parse_conflict_keys(value: object) -> tuple[str, ...]:
         raise ValueError("conflict_keys must contain non-empty strings")
     if len(value) != len(set(value)):
         raise ValueError("conflict_keys must be unique")
+    if any(not _CONFLICT_KEY.fullmatch(item) for item in value):
+        raise ValueError("conflict_keys contains an unsupported key")
     return tuple(value)
 
 
@@ -466,6 +474,8 @@ def _validate_task(envelope: _TaskEnvelope, document: IssueDocument) -> None:
     _require_trusted(document, "owning task")
     if not document.body.strip():
         raise ValueError("owning task body must be non-empty")
+    if document.html_url != envelope.entry_ref:
+        raise ValueError("entry_ref does not match the owning task URL")
     if _canonical_digest(document.body) != envelope.task_body_sha256:
         raise ValueError("task_body_sha256 digest mismatch")
 
