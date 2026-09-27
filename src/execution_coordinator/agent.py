@@ -132,6 +132,30 @@ class AgentSession:
         self._generation = generation
         return result
 
+    def acknowledge(self, *, idempotency_key: str) -> MutationResult:
+        """Transition this session from CLAIMED to RUNNING before work."""
+
+        claim_id, generation = self._ensure_active()
+        try:
+            result = self._gateway.mutate(
+                operation="acknowledge",
+                payload={"claim_id": claim_id, "generation": generation},
+                idempotency_key=idempotency_key,
+            )
+            self._require_same_authority(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="acknowledge",
+            )
+            return result
+        except (CoordinationError, AdapterProtocolError):
+            # A failed acknowledge means this session no longer has a safe
+            # local authority assumption. Do not attempt compensating release:
+            # the remote claim is lease-bound and will expire if necessary.
+            self._fence()
+            raise
+
     def renew(self, *, idempotency_key: str) -> MutationResult:
         claim_id, generation = self._ensure_active()
         try:
@@ -180,11 +204,13 @@ class AgentSession:
         work: Callable[["AgentSession"], T],
         *,
         claim_idempotency_key: str,
+        acknowledge_idempotency_key: str,
         release_idempotency_key: str,
     ) -> T:
-        """Run work only after claim succeeds, then explicitly release it."""
+        """Run work only after claim and acknowledge succeed."""
 
         self.claim(idempotency_key=claim_idempotency_key)
+        self.acknowledge(idempotency_key=acknowledge_idempotency_key)
         try:
             return work(self)
         finally:
