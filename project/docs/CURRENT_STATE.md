@@ -14,6 +14,7 @@ Cross-repository authority remains:
 - devflow Repository Control #107 is the cross-repository index;
 - repository Issue #1 / merged PR #2 own the v0.1 runtime implementation evidence;
 - repository Issue #5 / merged PR #6 own the accepted Phase 3 agent-bootstrap adapter evidence;
+- repository Issue #9 / merged PR #13 own the accepted acknowledge-before-work lifecycle-conformance evidence;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 ## Accepted v0.1 behavior
@@ -121,15 +122,15 @@ Contract:
 - the adapter does not discover/rank tasks and does not create scheduler/controller authority;
 - merged-main adapter smoke completed with `tests.test_agent` 8/8 PASS and Issue #3 returned to `claims: {}`.
 
-### Issue #9 candidate lifecycle conformance
+### Issue #9 accepted lifecycle conformance
 
 - `AgentSession.acknowledge()` forwards the current `claim_id`, `generation`, and caller-owned idempotency key through the serialized mutation gateway;
-- a successful acknowledge must return the unchanged authority tuple before callback/work begins;
-- the candidate lifecycle is `claim -> acknowledge -> callback/work -> release`;
+- a successful acknowledge returns the unchanged authority tuple before callback/work begins;
+- the accepted lifecycle is `claim -> acknowledge -> callback/work -> release`;
 - malformed, stale, changed, or rejected acknowledge responses fence the local session and suppress callback/work;
 - acknowledge failure does not attempt compensating release because remote authority remains lease-bound and expiration is the safe fallback;
 - caller-supplied claim, acknowledge, renew, and release idempotency keys remain explicit and are not generated or replaced by the adapter;
-- discovery/ranking, automatic scheduling, controller negotiation, repo-monitor projection, and new durable state remain out of scope.
+- discovery/ranking, automatic scheduling, controller negotiation, repo-monitor projection, and new durable state remain out of scope;
 
 ## Review-policy boundary
 
@@ -156,6 +157,12 @@ Contract:
 - PR #6 merged as current main `1210b506ad1565159d0fb5d934eca66ca166542a`;
 - post-merge main Verify `36286744337` PASS;
 - merged-main adapter smoke: `tests.test_agent` 8/8 PASS and Issue #3 remained `claims: {}`.
+- Issue #9 / PR #13 exact-head Verify `36289641800` PASS on implementation head `72dbf48b93a5c8486a009bcadf710459c7c3727f`;
+- PR #13 merged as main `66bc5bad0176181f72b67e08dd89af349155c874`;
+- post-merge main Verify `36289737056` PASS;
+- post-merge serialized claim smoke `36289799489` PASS, returning `clm_b08f0684d8e35f6f964c2114ccb9aca2@1`;
+- post-merge acknowledge smoke `36289836146` PASS, preserving the same authority tuple;
+- post-merge release smoke `36289871636` PASS; Issue #3 readback has `claims: {}` and retains the corresponding claim/ack/release idempotency records.
 
 This is direct operational evidence that the default-main serialized mutation path can commit and release one bounded synthetic claim without leaving active authority behind.
 
@@ -180,4 +187,4 @@ This is direct operational evidence that the default-main serialized mutation pa
 
 ## Next action
 
-`Issue #9 is the active bounded Phase 3 lifecycle-conformance candidate on branch phase3/issue-9-acknowledge-before-work. Complete exact-head Verify, formal Review, merged-main Verify, and post-merge no-active-claim smoke before treating acknowledge-before-work as accepted. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
+`Issue #9 / PR #13 acknowledge-before-work lifecycle conformance is accepted on main \\`66bc5bad0176181f72b67e08dd89af349155c874\\`. Continue later execution-coordination phases only through devflow #105 and new bounded repository-local Issues; do not treat the adapter as automatic discovery, scheduling, repo-monitor projection, or controller negotiation.`
