@@ -163,6 +163,42 @@ class ListClaimableTests(unittest.TestCase):
             (candidate,),
         )
 
+    def test_duplicate_task_role_candidates_are_deduplicated_first_wins(self) -> None:
+        Candidate, list_claimable = self._api()
+        first = Candidate(
+            task="kinoko34077/example#1",
+            role=Role.IMPLEMENTER,
+            entry_ref="issue:first",
+            conflict_keys=("component:kinoko34077/example:first",),
+        )
+        duplicate = Candidate(
+            task=first.task,
+            role=first.role,
+            entry_ref="issue:duplicate",
+            conflict_keys=("component:kinoko34077/example:duplicate",),
+        )
+
+        result = list_claimable((first, duplicate), CoordinatorState.empty())
+
+        self.assertEqual(result, (first,))
+
+    def test_same_task_different_roles_remain_distinct(self) -> None:
+        Candidate, list_claimable = self._api()
+        reviewer = Candidate(
+            task="kinoko34077/example#1",
+            role=Role.REVIEWER,
+            entry_ref="issue:review",
+        )
+        verifier = Candidate(
+            task=reviewer.task,
+            role=Role.VERIFIER,
+            entry_ref="issue:verify",
+        )
+
+        result = list_claimable((reviewer, verifier), CoordinatorState.empty())
+
+        self.assertEqual(result, (reviewer, verifier))
+
     def test_projection_does_not_mutate_candidates_or_state(self) -> None:
         Candidate, list_claimable = self._api()
         candidate = Candidate(
