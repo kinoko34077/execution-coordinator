@@ -115,7 +115,7 @@ Contract:
 ### Agent bootstrap adapter (Phase 3)
 
 - `AgentSession` provides the bounded `claim -> acknowledge -> callback/work -> renew -> release` integration path;
-- implementation callback execution is refused unless claim acquisition succeeds;
+- implementation callback execution is refused unless claim acquisition and acknowledge both succeed;
 - current `claim_id` / `generation` are retained and forwarded to renew/release;
 - stale-generation, malformed-authority, and changed-authority responses fence the local adapter session;
 - release is explicit and repeated release is idempotent at the adapter boundary;
