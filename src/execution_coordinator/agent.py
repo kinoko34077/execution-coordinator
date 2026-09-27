@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Protocol, TypeVar
 
 from .engine import CoordinationError
-from .model import MutationResult, Role
+from .model import MutationResult, Role, WaitReason
 
 
 class MutationGateway(Protocol):
@@ -172,6 +172,62 @@ class AgentSession:
             )
             return result
         except (CoordinationError, AdapterProtocolError):
+            self._fence()
+            raise
+
+    def wait(
+        self,
+        *,
+        reason: WaitReason | str,
+        evidence_ref: str,
+        idempotency_key: str,
+    ) -> MutationResult:
+        """Enter an evidence-backed, lease-bound WAITING state."""
+
+        claim_id, generation = self._ensure_active()
+        wait_reason = WaitReason(reason)
+        if not evidence_ref.strip():
+            raise ValueError("wait requires evidence_ref")
+        try:
+            result = self._gateway.mutate(
+                operation="wait",
+                payload={
+                    "claim_id": claim_id,
+                    "generation": generation,
+                    "reason": wait_reason.value,
+                    "evidence_ref": evidence_ref,
+                },
+                idempotency_key=idempotency_key,
+            )
+            self._require_same_authority(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="wait",
+            )
+            return result
+        except RuntimeError:
+            self._fence()
+            raise
+
+    def resume(self, *, idempotency_key: str) -> MutationResult:
+        """Return a live WAITING claim to RUNNING with the same authority."""
+
+        claim_id, generation = self._ensure_active()
+        try:
+            result = self._gateway.mutate(
+                operation="resume",
+                payload={"claim_id": claim_id, "generation": generation},
+                idempotency_key=idempotency_key,
+            )
+            self._require_same_authority(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="resume",
+            )
+            return result
+        except RuntimeError:
             self._fence()
             raise
 
