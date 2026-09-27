@@ -147,7 +147,7 @@ class AgentSession:
                 operation="acknowledge",
             )
             return result
-        except (CoordinationError, AdapterProtocolError):
+        except RuntimeError:
             self._fence()
             raise
 
