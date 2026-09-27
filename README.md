@@ -42,11 +42,14 @@ session = AgentSession(
 session.run(
     lambda active: implement_after_claim(active),
     claim_idempotency_key="task-123-claim-1",
+    acknowledge_idempotency_key="task-123-ack-1",
     release_idempotency_key="task-123-release-1",
 )
 ```
 
-The callback is not entered unless the claim succeeds. The adapter forwards the current claim ID/generation for `renew` and `release`, fences the local session after stale-generation or malformed-authority responses, and leaves intentional external waits to the caller: release the claim before waiting when safe, then claim again through the normal authority path.
+The callback is not entered unless the claim is acknowledged successfully. The adapter forwards the current claim ID/generation for `acknowledge`, `renew`, `progress`, `wait`, `resume`, `release`, and `fail`, fences the local session after stale-generation or malformed-authority responses, and preserves explicit wait/resume semantics. For intentional external waits, call `wait` with evidence and release the claim before waiting when safe, then claim again through the normal authority path.
+
+`AgentSession` does not generate retry keys. Callers provide stable idempotency keys for each mutation and may use `fail` for terminal execution failure. Callback exceptions preserve the original exception while attempting explicit release cleanup.
 
 This adapter is deliberately not a scheduler, controller, repo-monitor, or full Protocol v1 expected-state/failure-evidence implementation.
 

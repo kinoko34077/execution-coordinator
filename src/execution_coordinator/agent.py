@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Callable, Protocol, TypeVar
 
 from .engine import CoordinationError
-from .model import MutationResult, Role
+from .model import ExecutionState, MutationResult, Role, WaitReason
 
 
 class MutationGateway(Protocol):
@@ -57,6 +57,7 @@ class AgentSession:
         self._branch = branch
         self._claim_id: str | None = None
         self._generation: int | None = None
+        self._execution_state: ExecutionState | None = None
         self._fenced = False
         self._released = False
 
@@ -83,6 +84,7 @@ class AgentSession:
     def _fence(self) -> None:
         self._claim_id = None
         self._generation = None
+        self._execution_state = None
         self._fenced = True
 
     @staticmethod
@@ -109,6 +111,40 @@ class AgentSession:
         if (returned_claim_id, returned_generation) != (claim_id, generation):
             raise AdapterProtocolError(f"{operation} response changed claim authority")
 
+    @classmethod
+    def _require_live_claim(
+        cls,
+        result: MutationResult,
+        *,
+        claim_id: str,
+        generation: int,
+        operation: str,
+        expected_state: ExecutionState | None = None,
+    ) -> ExecutionState:
+        cls._require_same_authority(
+            result,
+            claim_id=claim_id,
+            generation=generation,
+            operation=operation,
+        )
+        try:
+            claim = result.state.claims.get(claim_id)
+            returned_generation = claim.generation if claim is not None else None
+            returned_state = claim.state if claim is not None else None
+        except (AttributeError, TypeError) as exc:
+            raise AdapterProtocolError(
+                f"{operation} response did not return a usable live claim"
+            ) from exc
+        if claim is None or returned_generation != generation or returned_state is None:
+            raise AdapterProtocolError(
+                f"{operation} response did not return the current live claim"
+            )
+        if expected_state is not None and returned_state is not expected_state:
+            raise AdapterProtocolError(
+                f"{operation} response returned unexpected execution state"
+            )
+        return returned_state
+
     def claim(self, *, idempotency_key: str) -> MutationResult:
         self._ensure_claimable()
         result = self._gateway.mutate(
@@ -125,11 +161,42 @@ class AgentSession:
         )
         try:
             claim_id, generation = self._require_authority(result)
+            execution_state = self._require_live_claim(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="claim",
+                expected_state=ExecutionState.CLAIMED,
+            )
         except (TypeError, AttributeError, AdapterProtocolError):
             self._fence()
             raise
         self._claim_id = claim_id
         self._generation = generation
+        self._execution_state = execution_state
+        return result
+
+    def acknowledge(self, *, idempotency_key: str) -> MutationResult:
+        claim_id, generation = self._ensure_active()
+        if self._execution_state is not ExecutionState.CLAIMED:
+            raise RuntimeError("acknowledge requires CLAIMED state")
+        try:
+            result = self._gateway.mutate(
+                operation="acknowledge",
+                payload={"claim_id": claim_id, "generation": generation},
+                idempotency_key=idempotency_key,
+            )
+            execution_state = self._require_live_claim(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="acknowledge",
+                expected_state=ExecutionState.RUNNING,
+            )
+        except (CoordinationError, AdapterProtocolError):
+            self._fence()
+            raise
+        self._execution_state = execution_state
         return result
 
     def renew(self, *, idempotency_key: str) -> MutationResult:
@@ -146,10 +213,118 @@ class AgentSession:
                 generation=generation,
                 operation="renew",
             )
+            self._execution_state = self._require_live_claim(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="renew",
+            )
             return result
         except (CoordinationError, AdapterProtocolError):
             self._fence()
             raise
+
+    def progress(self, *, idempotency_key: str) -> MutationResult:
+        claim_id, generation = self._ensure_active()
+        try:
+            result = self._gateway.mutate(
+                operation="progress",
+                payload={"claim_id": claim_id, "generation": generation},
+                idempotency_key=idempotency_key,
+            )
+            self._execution_state = self._require_live_claim(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="progress",
+            )
+            return result
+        except (CoordinationError, AdapterProtocolError):
+            self._fence()
+            raise
+
+    def wait(
+        self,
+        *,
+        reason: WaitReason | str,
+        evidence_ref: str,
+        idempotency_key: str,
+    ) -> MutationResult:
+        wait_reason = WaitReason(reason)
+        if not evidence_ref.strip():
+            raise ValueError("wait requires evidence_ref")
+        claim_id, generation = self._ensure_active()
+        try:
+            result = self._gateway.mutate(
+                operation="wait",
+                payload={
+                    "claim_id": claim_id,
+                    "generation": generation,
+                    "reason": wait_reason.value,
+                    "evidence_ref": evidence_ref,
+                },
+                idempotency_key=idempotency_key,
+            )
+            self._execution_state = self._require_live_claim(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="wait",
+                expected_state=ExecutionState.WAITING,
+            )
+            return result
+        except (CoordinationError, AdapterProtocolError):
+            self._fence()
+            raise
+
+    def resume(self, *, idempotency_key: str) -> MutationResult:
+        claim_id, generation = self._ensure_active()
+        if self._execution_state is not ExecutionState.WAITING:
+            raise RuntimeError("resume requires WAITING state")
+        try:
+            result = self._gateway.mutate(
+                operation="resume",
+                payload={"claim_id": claim_id, "generation": generation},
+                idempotency_key=idempotency_key,
+            )
+            self._execution_state = self._require_live_claim(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="resume",
+                expected_state=ExecutionState.RUNNING,
+            )
+            return result
+        except (CoordinationError, AdapterProtocolError):
+            self._fence()
+            raise
+
+    def fail(self, *, reason: str, idempotency_key: str) -> MutationResult:
+        claim_id, generation = self._ensure_active()
+        try:
+            result = self._gateway.mutate(
+                operation="fail",
+                payload={
+                    "claim_id": claim_id,
+                    "generation": generation,
+                    "reason": reason,
+                },
+                idempotency_key=idempotency_key,
+            )
+            self._require_same_authority(
+                result,
+                claim_id=claim_id,
+                generation=generation,
+                operation="fail",
+            )
+        except (CoordinationError, AdapterProtocolError):
+            self._fence()
+            raise
+        self._claim_id = None
+        self._generation = None
+        self._execution_state = None
+        self._released = True
+        return result
 
     def release(self, *, idempotency_key: str) -> MutationResult | None:
         if self._released:
@@ -172,6 +347,7 @@ class AgentSession:
             raise
         self._claim_id = None
         self._generation = None
+        self._execution_state = None
         self._released = True
         return result
 
@@ -180,12 +356,23 @@ class AgentSession:
         work: Callable[["AgentSession"], T],
         *,
         claim_idempotency_key: str,
+        acknowledge_idempotency_key: str,
         release_idempotency_key: str,
     ) -> T:
-        """Run work only after claim succeeds, then explicitly release it."""
+        """Run work only after claim acknowledgement, then explicitly release it."""
 
         self.claim(idempotency_key=claim_idempotency_key)
         try:
-            return work(self)
-        finally:
-            self.release(idempotency_key=release_idempotency_key)
+            self.acknowledge(idempotency_key=acknowledge_idempotency_key)
+            result = work(self)
+        except BaseException as work_error:
+            if self.claim_id is not None:
+                try:
+                    self.release(idempotency_key=release_idempotency_key)
+                except BaseException as release_error:
+                    work_error.add_note(
+                        f"release after work failure failed: {release_error}"
+                    )
+            raise
+        self.release(idempotency_key=release_idempotency_key)
+        return result

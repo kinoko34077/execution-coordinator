@@ -113,13 +113,15 @@ Contract:
 
 ### Agent bootstrap adapter (Phase 3)
 
-- `AgentSession` provides the bounded `claim -> callback/work -> renew -> release` integration path;
-- implementation callback execution is refused unless claim acquisition succeeds;
-- current `claim_id` / `generation` are retained and forwarded to renew/release;
+- `AgentSession` provides the bounded `claim -> acknowledge -> callback/work -> progress/renew -> wait/resume or release/fail` integration path;
+- implementation callback execution is refused unless claim acquisition and acknowledgement succeed;
+- current `claim_id` / `generation` are retained and forwarded to all lifecycle mutations;
+- explicit `acknowledge`, `progress`, `wait`, `resume`, and `fail` adapter operations preserve the runtime mutation contract;
 - stale-generation, malformed-authority, and changed-authority responses fence the local adapter session;
-- release is explicit and repeated release is idempotent at the adapter boundary;
+- release is explicit and repeated release is idempotent at the adapter boundary; callback failures retain the original exception while attempting cleanup;
 - the adapter does not discover/rank tasks and does not create scheduler/controller authority;
-- merged-main adapter smoke completed with `tests.test_agent` 8/8 PASS and Issue #3 returned to `claims: {}`.
+- merged-main adapter smoke for PR #6 completed with `tests.test_agent` 8/8 PASS and Issue #3 returned to `claims: {}`;
+- Issue #10 extends this adapter over the existing runtime lifecycle operations; its focused 11-test evidence remains a candidate until exact-head Review, merge, and post-merge smoke complete.
 ## Review-policy boundary
 
 - `worker_id` is runtime coordination metadata supplied by the client, not a cryptographic identity or GitHub security principal;

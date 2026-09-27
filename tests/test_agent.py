@@ -5,9 +5,15 @@ from datetime import datetime, timedelta, timezone
 
 from execution_coordinator.engine import CoordinationError
 from execution_coordinator.github_state import GitHubApiError
-from execution_coordinator.model import CoordinatorState, MutationResult, Role
+from execution_coordinator.model import (
+    CoordinatorState,
+    ExecutionState,
+    MutationResult,
+    Role,
+    WaitReason,
+)
 from execution_coordinator.mutate import apply_mutation
-from execution_coordinator.snapshot import render_issue_body
+from execution_coordinator.snapshot import parse_issue_body, render_issue_body
 from execution_coordinator.agent import AdapterProtocolError, AgentSession
 
 
@@ -74,6 +80,7 @@ class AgentSessionTests(unittest.TestCase):
             contender.run(
                 lambda _session: entered.append(True),
                 claim_idempotency_key="claim-contender",
+                acknowledge_idempotency_key="ack-contender",
                 release_idempotency_key="release-contender",
             )
 
@@ -88,6 +95,7 @@ class AgentSessionTests(unittest.TestCase):
         result = session.run(
             lambda active: observed.append((active.claim_id, active.generation)) or "done",
             claim_idempotency_key="claim-1",
+            acknowledge_idempotency_key="ack-1",
             release_idempotency_key="release-1",
         )
 
@@ -96,7 +104,10 @@ class AgentSessionTests(unittest.TestCase):
         self.assertIsNotNone(observed[0][0])
         self.assertEqual(1, observed[0][1])
         self.assertIsNone(session.claim_id)
-        self.assertEqual(["claim", "release"], [call[0] for call in gateway.calls])
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
         self.assertEqual(
             {
                 "task": "kinoko34077/example#1",
@@ -130,6 +141,79 @@ class AgentSessionTests(unittest.TestCase):
             self.assertEqual(1, payload["generation"])
         self.assertIsNone(session.claim_id)
 
+    def test_lifecycle_methods_forward_authority_and_transition_waiting(self) -> None:
+        gateway = _Gateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+
+        session.acknowledge(idempotency_key="ack-1")
+        session.progress(idempotency_key="progress-1")
+        session.wait(
+            reason=WaitReason.CI,
+            evidence_ref="run:123",
+            idempotency_key="wait-1",
+        )
+        waiting_state = parse_issue_body(gateway.store.body)
+        claim = next(iter(waiting_state.claims.values()))
+        self.assertEqual(ExecutionState.WAITING, claim.state)
+        session.resume(idempotency_key="resume-1")
+        session.fail(reason="verification failed", idempotency_key="fail-1")
+
+        self.assertEqual(
+            ["claim", "acknowledge", "progress", "wait", "resume", "fail"],
+            [call[0] for call in gateway.calls],
+        )
+        for operation, payload, _key in gateway.calls[1:]:
+            self.assertEqual("clm_", payload["claim_id"][:4])
+            self.assertEqual(1, payload["generation"])
+        self.assertEqual("CI", gateway.calls[3][1]["reason"])
+        self.assertEqual("run:123", gateway.calls[3][1]["evidence_ref"])
+        self.assertEqual("verification failed", gateway.calls[5][1]["reason"])
+        self.assertIsNone(session.claim_id)
+
+    def test_resume_requires_waiting_without_gateway_call(self) -> None:
+        gateway = _Gateway()
+        session = self._session(gateway)
+        session.claim(idempotency_key="claim-1")
+
+        with self.assertRaisesRegex(RuntimeError, "WAITING"):
+            session.resume(idempotency_key="resume-invalid")
+
+        self.assertEqual(["claim"], [call[0] for call in gateway.calls])
+
+    def test_work_exception_preserves_original_when_release_fails(self) -> None:
+        class ReleaseFailureGateway(_Gateway):
+            def mutate(
+                self,
+                *,
+                operation: str,
+                payload: dict[str, object],
+                idempotency_key: str,
+            ) -> MutationResult:
+                if operation == "release":
+                    raise CoordinationError("release unavailable")
+                return super().mutate(
+                    operation=operation,
+                    payload=payload,
+                    idempotency_key=idempotency_key,
+                )
+
+        gateway = ReleaseFailureGateway()
+        session = self._session(gateway)
+
+        def fail(_session: AgentSession) -> None:
+            raise ValueError("work failed")
+
+        with self.assertRaisesRegex(ValueError, "work failed") as raised:
+            session.run(
+                fail,
+                claim_idempotency_key="claim-1",
+                acknowledge_idempotency_key="ack-1",
+                release_idempotency_key="release-1",
+            )
+
+        self.assertTrue(any("release" in note for note in raised.exception.__notes__))
+
     def test_release_is_idempotent_after_success(self) -> None:
         gateway = _Gateway()
         session = self._session(gateway)
@@ -153,11 +237,15 @@ class AgentSessionTests(unittest.TestCase):
             session.run(
                 fail,
                 claim_idempotency_key="claim-1",
+                acknowledge_idempotency_key="ack-1",
                 release_idempotency_key="release-1",
             )
 
         self.assertIsNone(session.claim_id)
-        self.assertEqual(["claim", "release"], [call[0] for call in gateway.calls])
+        self.assertEqual(
+            ["claim", "acknowledge", "release"],
+            [call[0] for call in gateway.calls],
+        )
 
     def test_malformed_claim_response_fences_session(self) -> None:
         class MalformedGateway:
