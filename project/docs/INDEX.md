@@ -10,6 +10,7 @@
 - `docs/superpowers/plans/2026-09-28-phase1-managed-frontier.md`
 - `docs/superpowers/plans/2026-09-28-phase2-frontier-ranking.md`
 - `docs/superpowers/plans/2026-09-28-phase3-capability-match.md`
+- `docs/superpowers/plans/2026-09-28-phase5-execution-request.md`
 - `docs/superpowers/plans/2026-09-28-phase4-autonomous-cycle.md`
 
 ## Runtime entry points
@@ -23,6 +24,7 @@
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
+- `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
@@ -55,6 +57,10 @@
 ## Phase 4 agent-first autonomous cycle
 
 - Issue #66 — bounded `run_autonomous_cycle()` boundary over one already refreshed `CapabilityMatchResult`: first eligible match only, one claim attempt, no fallback after rejection, acknowledge-before-work, and existing `AgentSession` release/fencing. No refresh, scheduler, provider/controller, repo-monitor or second authority.
+
+## Phase 5 provider-independent execution-request boundary
+
+- Issue #68 — typed `ExecutionRequest` / `DispatchOutcome` boundary over an already acknowledged `RUNNING` claim: exact evidence/freshness binding, explicit capability/environment and bootstrap context, launch accepted/unavailable/failed outcomes, and pre-acknowledge reconciliation evidence. No provider adapter, scheduler, controller, repo-monitor or second authority.
 
 ## Future follow-up candidate
 
