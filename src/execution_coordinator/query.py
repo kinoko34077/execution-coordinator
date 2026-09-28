@@ -15,6 +15,7 @@ from .model import (
     CoordinatorState,
     Role,
     roles_can_share_conflict_key,
+    roles_can_share_task,
     same_worker_role_conflict,
 )
 from .snapshot import parse_issue_body, state_to_data
@@ -79,7 +80,9 @@ def _candidate_runtime_blockers(
     blockers: list[Claim] = []
     candidate_keys = set(candidate.conflict_keys)
     for active in state.claims.values():
-        if active.task == candidate.task and active.role == candidate.role:
+        if active.task == candidate.task and not roles_can_share_task(
+            active.role, candidate.role
+        ):
             blockers.append(active)
             continue
         if worker_id is not None and same_worker_role_conflict(

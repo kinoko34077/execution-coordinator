@@ -16,6 +16,7 @@ from .model import (
     Role,
     WaitReason,
     roles_can_share_conflict_key,
+    roles_can_share_task,
     same_worker_role_conflict,
 )
 
@@ -170,6 +171,10 @@ def claim(
     for active in state.claims.values():
         if active.task == task and active.role == role:
             raise ClaimConflict(f"task/role already claimed: {task} {role.value}")
+        if active.task == task and not roles_can_share_task(active.role, role):
+            raise ClaimConflict(
+                f"task has incompatible active role: {task} {active.role.value}"
+            )
         if _same_worker_self_review(active, task=task, role=role, worker_id=worker_id):
             raise ClaimConflict("same worker cannot hold implementer and independent reviewer roles for one task")
         if set(active.conflict_keys).intersection(keys) and not _roles_compatible(active.role, role):

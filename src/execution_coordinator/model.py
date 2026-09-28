@@ -12,6 +12,7 @@ MAX_IDEMPOTENCY_RECORDS = 128
 class Role(StrEnum):
     IMPLEMENTER = "implementer"
     REVIEWER = "reviewer"
+    RECOVERY = "recovery"
     VERIFIER = "verifier"
     INTEGRATOR = "integrator"
 
@@ -69,6 +70,21 @@ def roles_can_share_conflict_key(left: Role, right: Role) -> bool:
     return Role.REVIEWER in (left, right)
 
 
+def roles_can_share_task(left: Role, right: Role) -> bool:
+    """Return whether distinct role claims may coexist on one task.
+
+    Existing v1 role pairs remain compatible. Recovery is a successor-work
+    authority and therefore cannot race another non-reviewer role on the same
+    task. Review remains observationally compatible with recovery.
+    """
+
+    if left == right:
+        return False
+    if Role.REVIEWER in (left, right):
+        return True
+    return Role.RECOVERY not in (left, right)
+
+
 def same_worker_role_conflict(
     active: Claim,
     *,
@@ -76,12 +92,14 @@ def same_worker_role_conflict(
     role: Role,
     worker_id: str,
 ) -> bool:
-    """Reject one logical worker acting as implementer and reviewer on a task."""
+    """Reject one worker carrying execution and independent-review authority."""
 
+    roles = {active.role, role}
     return (
         active.task == task
         and active.worker_id == worker_id
-        and {active.role, role} == {Role.IMPLEMENTER, Role.REVIEWER}
+        and Role.REVIEWER in roles
+        and bool(roles.intersection({Role.IMPLEMENTER, Role.RECOVERY}))
     )
 
 

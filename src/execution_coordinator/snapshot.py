@@ -14,6 +14,7 @@ from .model import (
     Role,
     WaitReason,
     roles_can_share_conflict_key,
+    roles_can_share_task,
     same_worker_role_conflict,
 )
 
@@ -145,6 +146,10 @@ def _validate_authority_invariants(
                 raise SnapshotError(
                     "same worker cannot hold implementer and reviewer authority for one task"
                 )
+            if active.task == claim.task and not roles_can_share_task(
+                active.role, claim.role
+            ):
+                raise SnapshotError("active claims contain incompatible task-role ownership")
             if (
                 set(active.conflict_keys).intersection(claim.conflict_keys)
                 and not roles_can_share_conflict_key(active.role, claim.role)
