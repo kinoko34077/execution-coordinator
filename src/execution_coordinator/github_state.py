@@ -153,6 +153,9 @@ class GitHubStateStore:
         )
         return payload
 
+    def _prove_authority_identity(self) -> None:
+        self._validate_issue_payload(self._request("GET", self.issue_url))
+
     def load_body(self) -> str:
         payload = self._validate_issue_payload(self._request("GET", self.issue_url))
         if not isinstance(payload.get("body"), str):
@@ -169,6 +172,7 @@ class GitHubStateStore:
         )
 
     def save_body(self, body: str) -> None:
+        self._prove_authority_identity()
         payload = self._validate_issue_payload(
             self._request("PATCH", self.issue_url, {"body": body})
         )
@@ -176,6 +180,7 @@ class GitHubStateStore:
             raise GitHubApiError("GitHub issue update did not confirm the requested body")
 
     def add_comment(self, body: str) -> None:
+        self._prove_authority_identity()
         url = f"{self.issue_url}/comments"
         payload = self._request("POST", url, {"body": body})
         if not isinstance(payload, dict):
