@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Iterable
 
 from .discovery import DiscoveryFailure
@@ -281,6 +281,9 @@ def match_ranked_frontier(
             continue
         if item.metadata.ready_at is not None and item.metadata.ready_at > now:
             omissions.append(_omission(candidate, "candidate ready_at is in the future"))
+            continue
+        if item.metadata.task != candidate.task or item.metadata.role is not candidate.role:
+            omissions.append(_omission(candidate, "ranking metadata task/role mismatch"))
             continue
         if item.metadata.candidate_fingerprint != candidate_fingerprint(candidate):
             omissions.append(_omission(candidate, "ranking fingerprint mismatch"))
