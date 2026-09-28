@@ -106,6 +106,10 @@ def _control_body(publications: list[dict[str, object]], *, repository: str = RE
     return (
         "## Repository\n\n"
         f"`{repository}`\n\n"
+        "## Repository State\n\n"
+        "`ACTIVE`\n\n"
+        "## Next Action\n\n"
+        "`[IMPLEMENT] continue bounded work`\n\n"
         f"{MARKER_BEGIN}\n"
         f"{json.dumps(payload, indent=2, sort_keys=True)}\n"
         f"{MARKER_END}\n"
