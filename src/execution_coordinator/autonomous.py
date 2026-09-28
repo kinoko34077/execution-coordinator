@@ -7,6 +7,7 @@ from typing import Callable
 from .agent import AgentSession, MutationGateway
 from .capability import CapabilityMatch, CapabilityMatchResult
 from .engine import CoordinationError
+from .model import Role
 from .ranking import candidate_fingerprint
 
 
@@ -40,6 +41,41 @@ class AutonomousCycleKeys:
 
 
 @dataclass(frozen=True, slots=True)
+class AutonomousAttempt:
+    """Identity of one execution attempt and what it published (decision 3C).
+
+    ``published`` holds every exact ``(task, role)`` candidate identity that
+    this attempt published, added, or relaxed.  Such a candidate may not be
+    consumed by the same attempt; a later, separate attempt may claim it.
+    """
+
+    attempt_id: str
+    published: frozenset[tuple[str, Role]] = frozenset()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.attempt_id, str) or not self.attempt_id.strip():
+            raise ValueError("attempt_id must not be empty")
+        if not isinstance(self.published, frozenset):
+            raise ValueError("published must be a frozenset of (task, role) identities")
+        for item in self.published:
+            if (
+                not isinstance(item, tuple)
+                or len(item) != 2
+                or not isinstance(item[0], str)
+                or not item[0]
+                or not isinstance(item[1], Role)
+            ):
+                raise ValueError("published must contain only (task, Role) identities")
+
+
+@dataclass(frozen=True, slots=True)
+class CycleOmission:
+    task: str
+    role: Role
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class AutonomousCycleResult:
     schema_version: str
     worker_id: str
@@ -50,15 +86,23 @@ class AutonomousCycleResult:
     generation: int | None = None
     work_result: object | None = None
     rejection_reason: str | None = None
+    attempt_id: str | None = None
+    omissions: tuple[CycleOmission, ...] = ()
 
 
-def _no_candidate(worker_id: str) -> AutonomousCycleResult:
+def _no_candidate(
+    worker_id: str,
+    attempt: AutonomousAttempt,
+    omissions: tuple[CycleOmission, ...],
+) -> AutonomousCycleResult:
     return AutonomousCycleResult(
         schema_version=AUTONOMOUS_CYCLE_SCHEMA_VERSION,
         worker_id=worker_id,
         status=CycleStatus.NO_CANDIDATE,
         selected=None,
         claim_attempts=0,
+        attempt_id=attempt.attempt_id,
+        omissions=omissions,
     )
 
 
@@ -66,6 +110,8 @@ def _claim_rejected(
     frontier: CapabilityMatchResult,
     selected: CapabilityMatch,
     error: CoordinationError,
+    attempt: AutonomousAttempt,
+    omissions: tuple[CycleOmission, ...],
 ) -> AutonomousCycleResult:
     return AutonomousCycleResult(
         schema_version=AUTONOMOUS_CYCLE_SCHEMA_VERSION,
@@ -74,6 +120,8 @@ def _claim_rejected(
         selected=selected,
         claim_attempts=1,
         rejection_reason=f"{type(error).__name__}: {error}",
+        attempt_id=attempt.attempt_id,
+        omissions=omissions,
     )
 
 
@@ -82,6 +130,7 @@ def run_autonomous_cycle(
     gateway: MutationGateway,
     *,
     keys: AutonomousCycleKeys,
+    attempt: AutonomousAttempt,
     work: Callable[[AgentSession], object],
     base_sha: str | None = None,
     branch: str | None = None,
@@ -90,7 +139,8 @@ def run_autonomous_cycle(
 
     The caller is responsible for refreshing discovery, runtime state and
     capability evidence before invoking this bounded execution boundary.  This
-    function selects only the first already-eligible match, submits one claim,
+    function selects only the first already-eligible match that this attempt
+    did not itself publish (decision 3C), submits one claim,
     and never falls through to another candidate after a rejection.  Existing
     ``AgentSession`` fencing and lifecycle semantics remain the authority.
     """
@@ -99,12 +149,33 @@ def run_autonomous_cycle(
         raise TypeError("frontier must be a CapabilityMatchResult")
     if not isinstance(keys, AutonomousCycleKeys):
         raise TypeError("keys must be an AutonomousCycleKeys")
+    if not isinstance(attempt, AutonomousAttempt):
+        raise TypeError("attempt must be an AutonomousAttempt")
     if not callable(work):
         raise TypeError("work must be callable")
-    if not frontier.matches:
-        return _no_candidate(frontier.worker_id)
 
-    selected = frontier.matches[0]
+    # Decision 3C: a candidate this attempt published or relaxed is never
+    # consumed by the same attempt.  Excluding it is a selection filter, not a
+    # claim attempt, so the one-claim-per-cycle bound is unaffected.
+    omissions: list[CycleOmission] = []
+    selected: CapabilityMatch | None = None
+    for match in frontier.matches:
+        identity = (match.candidate.task, match.candidate.role)
+        if identity in attempt.published:
+            omissions.append(
+                CycleOmission(
+                    task=match.candidate.task,
+                    role=match.candidate.role,
+                    reason="candidate was published by this attempt (3C)",
+                )
+            )
+            continue
+        selected = match
+        break
+    cycle_omissions = tuple(omissions)
+    if selected is None:
+        return _no_candidate(frontier.worker_id, attempt, cycle_omissions)
+
     if selected.worker_id != frontier.worker_id:
         raise ValueError("selected capability match belongs to another worker")
     if (
@@ -129,7 +200,7 @@ def run_autonomous_cycle(
     except CoordinationError as exc:
         # One serialized rejection ends this discovery cycle.  In particular,
         # do not attempt the next ranked candidate with the same stale read.
-        return _claim_rejected(frontier, selected, exc)
+        return _claim_rejected(frontier, selected, exc, attempt, cycle_omissions)
 
     claim_id = session.claim_id
     generation = session.generation
@@ -161,4 +232,6 @@ def run_autonomous_cycle(
         claim_id=claim_id,
         generation=generation,
         work_result=work_result,
+        attempt_id=attempt.attempt_id,
+        omissions=cycle_omissions,
     )
