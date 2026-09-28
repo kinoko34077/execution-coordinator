@@ -89,7 +89,7 @@ def run_autonomous_cycle(
     """Run one worker-scoped, at-most-one-claim autonomous cycle.
 
     The caller is responsible for refreshing discovery, runtime state and
-    capability evidence before invoking this pure selection boundary.  This
+    capability evidence before invoking this bounded execution boundary.  This
     function selects only the first already-eligible match, submits one claim,
     and never falls through to another candidate after a rejection.  Existing
     ``AgentSession`` fencing and lifecycle semantics remain the authority.
