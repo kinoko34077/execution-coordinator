@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import unittest
 
+from execution_coordinator.discovery import DurableIssueSource
 from execution_coordinator.engine import ClaimConflict, claim
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.reconciliation import discover_reconciliation_candidates
@@ -13,6 +14,9 @@ from tests.test_reconciliation_discovery import (
 )
 
 
+CONTROL = DurableIssueSource("kinoko34077/devflow", 107)
+
+
 class ReconciliationHardeningTests(unittest.TestCase):
     def test_malformed_role_type_fails_closed_as_discovery_failure(self) -> None:
         task_body = "task"
@@ -20,7 +24,7 @@ class ReconciliationHardeningTests(unittest.TestCase):
         publication["role"] = ["reviewer"]
         reader = _reader([publication], {7: task_body})
 
-        result = discover_reconciliation_candidates(reader=reader, sources=(reader and __import__("execution_coordinator.discovery", fromlist=["DurableIssueSource"]).DurableIssueSource("kinoko34077/devflow", 107),))
+        result = discover_reconciliation_candidates((CONTROL,), reader)
 
         self.assertEqual(result.candidates, ())
         self.assertEqual(len(result.failures), 1)
@@ -41,11 +45,8 @@ class ReconciliationHardeningTests(unittest.TestCase):
             context=publication["context"],
         )
         reader = _reader([publication], {7: task_body})
-        from execution_coordinator.discovery import DurableIssueSource
 
-        result = discover_reconciliation_candidates(
-            (DurableIssueSource("kinoko34077/devflow", 107),), reader
-        )
+        result = discover_reconciliation_candidates((CONTROL,), reader)
 
         self.assertEqual(result.candidates, ())
         self.assertEqual(len(result.failures), 1)
