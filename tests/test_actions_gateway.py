@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from urllib.error import URLError
 from datetime import datetime, timezone
 
 from execution_coordinator.actions_gateway import (
@@ -12,7 +13,12 @@ from execution_coordinator.actions_gateway import (
 from execution_coordinator.agent import AgentSession
 from execution_coordinator.engine import CoordinationError
 from execution_coordinator.model import CoordinatorState, Role
-from execution_coordinator.mutate import apply_mutation
+from execution_coordinator.mutate import (
+    REJECTION_ANNOTATION_TITLE,
+    apply_mutation,
+    rejection_annotation,
+)
+from execution_coordinator.engine import ClaimConflict
 from execution_coordinator.snapshot import parse_issue_body, render_issue_body
 
 
@@ -59,6 +65,8 @@ class _FakeActions:
         self.commit = commit
         self.run_id = run_id
         self.requests: list[tuple[str, str, object]] = []
+        self.annotations: list[dict[str, object]] = []
+        self.jobs_error = False
 
     def __call__(self, request, timeout):
         body = json.loads(request.data.decode("utf-8")) if request.data else None
@@ -78,6 +86,12 @@ class _FakeActions:
                 except CoordinationError:
                     self.conclusion = "failure"
             return _Response({"workflow_run_id": self.run_id})
+        if request.full_url == f"{REPO}/actions/runs/{self.run_id}/jobs":
+            if self.jobs_error:
+                raise URLError("jobs unavailable")
+            return _Response({"jobs": [{"id": 555}]})
+        if request.full_url == f"{REPO}/check-runs/555/annotations":
+            return _Response(self.annotations)
         assert request.full_url == f"{REPO}/actions/runs/{self.run_id}"
         if self.pending_polls > 0:
             self.pending_polls -= 1
@@ -168,6 +182,40 @@ class ActionsMutationGatewayTests(unittest.TestCase):
         fake = _FakeActions(run_id=None, commit=False)
         with self.assertRaisesRegex(MutationOutcomeUnknown, "run id"):
             _gateway(fake).mutate(operation="claim", payload={}, idempotency_key="k")
+
+    def test_failed_run_surfaces_typed_rejection_from_annotation(self) -> None:
+        fake = _FakeActions(conclusion="failure", commit=False)
+        line = rejection_annotation(ClaimConflict("task already claimed"))
+        title, _, encoded = line.removeprefix("::error ").partition("::")
+        self.assertEqual(f"title={REJECTION_ANNOTATION_TITLE}", title)
+        fake.annotations = [
+            {"title": "other", "message": "noise"},
+            {"title": REJECTION_ANNOTATION_TITLE, "message": encoded},
+        ]
+        with self.assertRaises(MutationRunRejected) as ctx:
+            _gateway(fake).mutate(operation="claim", payload={}, idempotency_key="k")
+        self.assertEqual("ClaimConflict", ctx.exception.error_class)
+        self.assertIn("task already claimed", str(ctx.exception))
+
+    def test_unreadable_rejection_reason_is_still_a_rejection(self) -> None:
+        for setup in ("no-annotation", "jobs-error", "bad-json"):
+            with self.subTest(setup=setup):
+                fake = _FakeActions(conclusion="failure", commit=False)
+                if setup == "jobs-error":
+                    fake.jobs_error = True
+                if setup == "bad-json":
+                    fake.annotations = [
+                        {"title": REJECTION_ANNOTATION_TITLE, "message": "{not json"}
+                    ]
+                with self.assertRaises(MutationRunRejected) as ctx:
+                    _gateway(fake).mutate(operation="claim", payload={}, idempotency_key="k")
+                self.assertIsNone(ctx.exception.error_class)
+
+    def test_rejection_annotation_escapes_newlines_and_percent(self) -> None:
+        line = rejection_annotation(ValueError("100%\nsecond line"))
+        self.assertNotIn("\n", line)
+        self.assertIn("%25", line)
+        self.assertTrue(line.startswith(f"::error title={REJECTION_ANNOTATION_TITLE}::"))
 
     def test_constructor_validates_inputs(self) -> None:
         with self.assertRaises(ValueError):
