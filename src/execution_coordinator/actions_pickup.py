@@ -56,7 +56,15 @@ class CommandRejected(ValueError):
 def parse_command(body: str) -> tuple[str, dict[str, str]] | None:
     """Return ``(command, fields)`` or ``None`` when the comment is no command."""
 
-    lines = [line.strip() for line in (body or "").strip().splitlines() if line.strip()]
+    lines: list[str] = []
+    for raw in (body or "").strip().splitlines():
+        line = raw.strip()
+        if line == "---":
+            # A Markdown rule ends the command; tools often append an
+            # attribution footer below it.
+            break
+        if line:
+            lines.append(line)
     if not lines or lines[0] not in ("/pickup", "/release"):
         return None
     command = lines[0][1:]
