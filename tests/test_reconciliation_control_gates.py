@@ -3,10 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 import unittest
 
-from execution_coordinator.reconciliation import (
-    MARKER_BEGIN,
-    discover_reconciliation_claim_candidates,
-)
+from execution_coordinator.reconciliation import discover_reconciliation_claim_candidates
 from tests.test_reconciliation_adoption import (
     CONTROL_SOURCE,
     _Reader,
@@ -17,14 +14,7 @@ from tests.test_reconciliation_adoption import (
 
 
 def _canonical_control():
-    control = _control_document([_publication("reviewer")])
-    gate_sections = (
-        "## Repository State\n\n"
-        "`ACTIVE`\n\n"
-        "## Next Action\n\n"
-        "`[IMPLEMENT] continue bounded work`\n\n"
-    )
-    return replace(control, body=control.body.replace(MARKER_BEGIN, gate_sections + MARKER_BEGIN))
+    return _control_document([_publication("reviewer")])
 
 
 class ReconciliationControlGateTests(unittest.TestCase):
