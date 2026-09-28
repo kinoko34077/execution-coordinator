@@ -12,6 +12,7 @@ MAX_IDEMPOTENCY_RECORDS = 128
 class Role(StrEnum):
     IMPLEMENTER = "implementer"
     REVIEWER = "reviewer"
+    RECOVERY = "recovery"
     VERIFIER = "verifier"
     INTEGRATOR = "integrator"
 
