@@ -291,3 +291,18 @@ class CommandTests(unittest.TestCase):
             self.assertTrue(first["worker_session_id"].startswith("codex-20260928T160000Z-"))
             with self.assertRaises(ValueError):
                 load_session(path, "claude", now=NOW, devflow_tools=self.tools)
+
+
+class PythonVersionGuardTests(unittest.TestCase):
+    def test_old_interpreter_gets_clear_error(self):
+        import subprocess
+        import sys
+        from pathlib import Path
+
+        src = Path(__file__).resolve().parents[1] / "src"
+        code = (
+            "import sys; sys.version_info = (3, 10, 0, 'final', 0); sys.path.insert(0, %r)\n"
+            "try:\n import execution_coordinator\nexcept RuntimeError as e:\n print(e)\n" % str(src)
+        )
+        out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        self.assertIn("requires Python 3.11 or newer", out.stdout)
