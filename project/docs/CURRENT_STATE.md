@@ -45,7 +45,8 @@ Current authority rules include:
 - monotonic task/role generation fencing;
 - default 15-minute lease with separate heartbeat and progress timestamps;
 - canonical live states `CLAIMED`, `RUNNING`, and lease-bound `WAITING`;
-- `resume` transitions a current unexpired `WAITING` claim back to `RUNNING` and clears wait metadata;
+- `resume` transitions a current unexpired `WAITING` claim back to `RUNNING` and clears wait metadata; it does not extend or reset `lease_until`, so the resumed claim continues under its existing unexpired lease;
+- `renew` remains the explicit lease-extension operation; callers must not treat `resume` as an implicit renewal;
 - stale generations fail closed;
 - expired ownership is removed by serialized `expire`, followed by a later higher-generation `takeover`/`claim`;
 - retry-safe idempotency with mismatched-payload rejection;
@@ -84,6 +85,8 @@ expire
 
 The #49 adoption adds no second mutation lane, queue, database, assignment surface, or provider launcher.
 
+Issue #33 completed the bounded real queue/renew pilot on 2026-09-28. Under an unsaturated lane, an isolated `renew` committed the authoritative Issue #3 snapshot about 7.6–8 seconds after workflow-run creation. A 110-dispatch saturation burst was HTTP-accepted in full, while the global `queue: max` boundary admitted one executing run plus up to 100 pending runs; 9 overflow runs terminated as `failure` before any job was created. Dispatch/run creation therefore remains transport evidence only, not mutation success. Under saturation, renewal continuity is not guaranteed: a worker may be interrupted by fencing/lease expiry, but no uncommitted renew extends authority.
+
 ### AgentSession accepted surface
 
 `AgentSession` exposes the bounded caller-driven lifecycle:
@@ -102,7 +105,8 @@ Rules:
 - current `claim_id` / `generation` are forwarded for continuation operations;
 - live responses must preserve current authority and expected execution state;
 - malformed/stale/changed authority responses fence the local session;
-- transport failure during acknowledge, wait, or resume also fences local authority because remote state is uncertain;
+- `renew` is authoritative only when the gateway returns the same live claim from committed runtime state; dispatch acceptance alone is insufficient;
+- transport/runtime failure during continuation operations fences local authority when the remote state cannot be safely established;
 - release/fail terminal responses must remove the claim before local authority is cleared;
 - safe long waits should normally release rather than consume a lease; retained WAITING remains lease-bound.
 
@@ -245,6 +249,16 @@ Implementation/review evidence:
 - PR #51 squash merge `a0def11e8089139d933f1a405a8dabae46a28678`;
 - post-merge Verify `36397698631`: SUCCESS.
 
+### Issue #33 residual resolution / queue pilot
+
+- canonical Protocol v1 resolution: `resume` preserves the existing unexpired `lease_until`; explicit `renew` remains the only lease-extension operation;
+- no production runtime code change was required for that decision because accepted Protocol v1 and current `engine.resume()` already agree;
+- disposable pilot claim `clm_8444762b9d4b5b9ba9c2cd3449adfc53@1` was created, acknowledged, renewed, and finally released through the serialized main workflow;
+- isolated renew run `36401699306`: workflow created `2026-09-28T09:09:26Z`, committed heartbeat `2026-09-28T09:09:33.594167Z`, approximately 7.6–8 seconds to authoritative snapshot commit;
+- 110-dispatch `queue: max` burst: all dispatch calls returned HTTP 204; 100 queue slots were admitted behind the serialized lane while 9 overflow runs failed before any job was created; representative overflow run `36402267910` had `jobs=[]`;
+- final burst outcomes after bounded cleanup: 11 idempotent-success/replay runs, 90 cleanup cancellations, 9 pre-job overflow failures;
+- serialized release run `36402770620` succeeded and final Issue #3 readback returned `claims: {}`.
+
 ## Review / identity boundary
 
 - `worker_id` is runtime coordination metadata, not cryptographic identity or a GitHub security principal;
@@ -266,12 +280,10 @@ Not implemented or not released by #49:
 - read-only repo-monitor reconciliation UI;
 - bounded self-scheduling/work stealing;
 - Manual Execution Session stale-detection policy changes;
-- protocol-level `resume` / `lease_until` decision changes;
-- queue/renew-latency pilot evidence;
 - atomic sweep-plus-takeover;
 - fine-grained mutation lanes or external state storage.
 
-Current v0.1 also uses bounded idempotency retention, one coarse global mutation queue, and stderr/process-exit failure reporting rather than a structured failure envelope.
+Current v0.1 also uses bounded idempotency retention, one coarse global mutation queue, and stderr/process-exit failure reporting rather than a structured failure envelope. The fixed `queue: max` saturation boundary is an availability limit: deep backlog can outlast a lease, so the normal 5-minute renewal target is not a saturation guarantee; authority still fails closed at the last committed lease.
 
 ## Safety / authority boundary
 
@@ -285,6 +297,6 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 
 ## Next action
 
-Issue #49 / PR #51 is accepted at the implementation layer. After this Current State reconciliation and devflow Control #107 audit reconciliation are accepted, no repository-local implementation slice is released automatically.
+Issue #49 / PR #51 remains accepted at the implementation layer. Issue #33's two residuals are now resolved: `resume`/lease semantics were confirmed against Protocol v1 without code churn, and the bounded real queue/renew pilot completed with Issue #3 restored to no active claims.
 
-The next execution-coordination slice, if any, must be selected explicitly by devflow Work Order #105. Ranking, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and queue/pilot work remain separately gated.
+After this #53 Current State reconciliation and devflow Control #107/#105 reconciliation are accepted, no repository-local implementation slice is released automatically. The next execution-coordination slice, if any, must be selected explicitly by devflow Work Order #105. Ranking, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.
