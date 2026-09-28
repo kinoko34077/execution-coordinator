@@ -5,15 +5,12 @@ import json
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from execution_coordinator.discovery import (
-    DurableIssueSource,
-    IssueDocument,
-    discover_claim_candidates,
-)
+from execution_coordinator.discovery import DurableIssueSource, IssueDocument
 from execution_coordinator.engine import claim
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.query import list_claimable
-from execution_coordinator.snapshot import render_issue_body, parse_issue_body
+from execution_coordinator.reconciliation import discover_reconciliation_candidates
+from execution_coordinator.snapshot import parse_issue_body, render_issue_body
 
 
 BEGIN = "<!-- DEVFLOW_RECONCILIATION_WORK_V1_BEGIN -->"
@@ -222,7 +219,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
             {7: body7, 8: body8},
         )
 
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
 
         self.assertEqual(result.failures, ())
         self.assertEqual(
@@ -239,7 +236,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
         publication = _publication(task_number=7, task_body="published")
         reader = _reader([publication], {7: "changed"})
 
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
 
         self.assertEqual(result.candidates, ())
         self.assertEqual(len(result.failures), 1)
@@ -254,7 +251,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
             {7: task_body},
             control_author_association="NONE",
         )
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("trusted", result.failures[0].reason.lower())
 
@@ -265,7 +262,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
             task_body,
             author_association="NONE",
         )
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("trusted", result.failures[0].reason.lower())
 
@@ -275,7 +272,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
             entry_ref="https://github.com/other/repo/issues/7",
         )
         reader = _reader([mismatched], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("entry_ref", result.failures[0].reason)
 
@@ -288,14 +285,14 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
             {7: task_body},
             next_action="[USER_DECISION] choose reviewer",
         )
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("Gate", result.failures[0].reason)
 
         gated_body = "## Next Action\n\n[HUMAN_GATE] confirm takeover"
         publication = _publication(task_number=7, task_body=gated_body, role="recovery")
         reader = _reader([publication], {7: gated_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("Gate", result.failures[0].reason)
 
@@ -303,7 +300,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
         task_body = "task"
         integrator = _publication(task_number=7, task_body=task_body, role="integrator")
         reader = _reader([integrator], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("unsupported", result.failures[0].reason.lower())
 
@@ -311,7 +308,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
         duplicate = dict(reviewer)
         duplicate["publication_id"] = "sha256:" + "f" * 64
         reader = _reader([reviewer, duplicate], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("duplicate", result.failures[0].reason.lower())
 
@@ -320,14 +317,14 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
         publication = _publication(task_number=7, task_body=task_body)
         publication["publication_id"] = "sha256:" + "0" * 64
         reader = _reader([publication], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("publication_id", result.failures[0].reason)
 
         publication = _publication(task_number=7, task_body=task_body)
         publication["unexpected"] = True
         reader = _reader([publication], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("unknown", result.failures[0].reason.lower())
 
@@ -336,7 +333,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
         reviewer = _publication(task_number=7, task_body=task_body)
         reviewer["context"] = {"pr_number": 12, "pr_head_sha": "short"}
         reader = _reader([reviewer], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("pr_head_sha", result.failures[0].reason)
 
@@ -346,7 +343,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
             "task_body_sha256": recovery["task_body_sha256"],
         }
         reader = _reader([recovery], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.candidates, ())
         self.assertIn("source contract", result.failures[0].reason.lower())
 
@@ -354,7 +351,7 @@ class ReconciliationDemandDiscoveryTests(unittest.TestCase):
         task_body = "task"
         publication = _publication(task_number=7, task_body=task_body, role="recovery")
         reader = _reader([publication], {7: task_body})
-        result = discover_claim_candidates((CONTROL,), reader)
+        result = discover_reconciliation_candidates((CONTROL,), reader)
         self.assertEqual(result.failures, ())
         self.assertEqual(len(result.candidates), 1)
         candidate = result.candidates[0]
