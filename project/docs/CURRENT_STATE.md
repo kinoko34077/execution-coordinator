@@ -166,6 +166,19 @@ EXPIRED_UNSWEPT
 
 Expired-but-unswept claims remain authoritative blockers until the serialized `expire` mutation commits; the read-only projection never expires them itself.
 
+### Composed discovery / state / claimability read
+
+Issue #58 provides the bounded Phase 0 read-only composition required by devflow Work Order #175:
+
+```text
+explicit trusted Repository Control sources
+-> discover_claim_candidates()
+-> get_state_result()
+-> project_claimability() / list_claimable()
+```
+
+`compose_claimability_read()` preserves per-source discovery failures, validated runtime-state freshness metadata, claimability reasons and the existing claimable tuple. It does not rank, select, claim, publish, mutate Issue #3 or infer work from non-canonical sources.
+
 ### Development Reconciliation demand adoption
 
 Issue #49 / PR #51 consumes the accepted devflow #159 `development-reconciliation-work.v1` projection from the trusted Repository Control.
@@ -273,7 +286,7 @@ Not implemented or not released by #49:
 - arbitrary free-form Issue/Work Order interpretation;
 - priority/dependency frontier ranking and self-selection;
 - capability/environment matching;
-- one composed autonomous discovery -> state -> claimability -> claim loop;
+- an autonomous discovery -> state -> claimability -> claim loop with ranking, selection or claim mutation; the Phase 0 read-only composition is owned by Issue #58;
 - full `claim(..., expected_state, idempotency_key)` / structured failure-evidence conformance;
 - controller priority/capability/availability negotiation;
 - provider-specific worker selection/launch;
@@ -299,4 +312,4 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 
 Issue #49 / PR #51 remains accepted at the implementation layer. Issue #33's two residuals are now resolved: `resume`/lease semantics were confirmed against Protocol v1 without code churn, and the bounded real queue/renew pilot completed with Issue #3 restored to no active claims.
 
-After this #53 Current State reconciliation and devflow Control #107/#105 reconciliation are accepted, no repository-local implementation slice is released automatically. The next execution-coordination slice, if any, must be selected explicitly by devflow Work Order #105. Ranking, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.
+Phase 0 Issue #58 is the one explicitly released read-only composition slice under devflow Work Order #175. After its exact-head review, merge, post-merge Verify and bounded read-only smoke, the next execution-coordination slice must still be selected explicitly by devflow Work Order #105. Ranking, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.
