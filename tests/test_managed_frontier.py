@@ -198,26 +198,83 @@ class ManagedFrontierTests(unittest.TestCase):
         self.assertEqual(state.calls, 1)
         self.assertEqual(state.write_calls, 0)
 
-    def test_sources_are_sorted_and_duplicate_repository_identity_fails_closed(self) -> None:
-        later = DurableIssueSource("z-owner/repo", 9)
-        duplicate_control = DurableIssueSource("kinoko34077/devflow", 108)
-        reader = _IssueReader({})
+    def test_distinct_controls_in_devflow_are_not_duplicates(self) -> None:
+        # Every Repository Control lives in kinoko34077/devflow; the managed
+        # repository identity comes from the canonical Control title.
+        other_control = DurableIssueSource("kinoko34077/devflow", 108)
+        reader = _IssueReader(
+            {
+                ("kinoko34077/devflow", 107): _document(
+                    "kinoko34077/devflow", 107, _control_body(), title="[REPO] repo"
+                ),
+                ("kinoko34077/devflow", 108): _document(
+                    "kinoko34077/devflow", 108, _control_body(), title="[REPO] other"
+                ),
+            }
+        )
         state = _StateReader()
 
         result = enumerate_managed_frontier(
-            [later, duplicate_control, CONTROL],
+            [other_control, CONTROL],
+            issue_reader=reader,
+            state_reader=state,
+            now=NOW,
+        )
+
+        self.assertEqual(result.source_failures, ())
+        self.assertIsNotNone(result.read)
+        self.assertEqual(result.sources, (CONTROL, other_control))
+        self.assertEqual(
+            sorted(set(reader.calls)),
+            [("kinoko34077/devflow", 107), ("kinoko34077/devflow", 108)],
+        )
+
+    def test_duplicate_managed_repository_control_identity_fails_closed(self) -> None:
+        duplicate_control = DurableIssueSource("kinoko34077/devflow", 108)
+        reader = _IssueReader(
+            {
+                ("kinoko34077/devflow", 107): _document(
+                    "kinoko34077/devflow", 107, _control_body(), title="[REPO] repo"
+                ),
+                ("kinoko34077/devflow", 108): _document(
+                    "kinoko34077/devflow", 108, _control_body(), title="[REPO] Repo"
+                ),
+            }
+        )
+        state = _StateReader()
+
+        result = enumerate_managed_frontier(
+            [duplicate_control, CONTROL],
             issue_reader=reader,
             state_reader=state,
             now=NOW,
         )
 
         self.assertIsNone(result.read)
+        self.assertEqual(result.sources, (CONTROL, duplicate_control))
         self.assertEqual(
-            result.sources,
-            (CONTROL, duplicate_control, later),
+            [failure.source_ref for failure in result.source_failures],
+            ["kinoko34077/devflow#107", "kinoko34077/devflow#108"],
         )
+        self.assertTrue(
+            all("duplicate managed repository" in f.reason for f in result.source_failures)
+        )
+        self.assertEqual(state.calls, 0)
+
+    def test_exact_duplicate_source_fails_closed_without_reads(self) -> None:
+        reader = _IssueReader({})
+        state = _StateReader()
+
+        result = enumerate_managed_frontier(
+            [CONTROL, DurableIssueSource("kinoko34077/devflow", 107)],
+            issue_reader=reader,
+            state_reader=state,
+            now=NOW,
+        )
+
+        self.assertIsNone(result.read)
         self.assertEqual(len(result.source_failures), 1)
-        self.assertIn("duplicate", result.source_failures[0].reason)
+        self.assertIn("duplicate Repository Control source", result.source_failures[0].reason)
         self.assertEqual(reader.calls, [])
         self.assertEqual(state.calls, 0)
 
