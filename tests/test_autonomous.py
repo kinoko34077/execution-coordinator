@@ -5,6 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 
 from execution_coordinator.autonomous import (
+    AutonomousAttempt,
     AutonomousCycleKeys,
     CycleStatus,
     run_autonomous_cycle,
@@ -108,6 +109,7 @@ KEYS = AutonomousCycleKeys(
     acknowledge_idempotency_key="cycle-ack",
     release_idempotency_key="cycle-release",
 )
+ATTEMPT = AutonomousAttempt(attempt_id="attempt-1")
 
 
 class AutonomousCycleTests(unittest.TestCase):
@@ -121,6 +123,7 @@ class AutonomousCycleTests(unittest.TestCase):
             _frontier(first, second),
             gateway,
             keys=KEYS,
+            attempt=ATTEMPT,
             work=lambda session: observed.append(
                 ("work", session.claim_id)
             ) or "done",
@@ -151,6 +154,7 @@ class AutonomousCycleTests(unittest.TestCase):
             _frontier(first, second),
             gateway,
             keys=KEYS,
+            attempt=ATTEMPT,
             work=lambda _session: work_called.append(True),
         )
 
@@ -167,6 +171,7 @@ class AutonomousCycleTests(unittest.TestCase):
             _frontier(),
             gateway,
             keys=KEYS,
+            attempt=ATTEMPT,
             work=lambda _session: self.fail("work must not run"),
         )
 
@@ -200,6 +205,7 @@ class AutonomousCycleTests(unittest.TestCase):
                 _frontier(_match(_candidate(1))),
                 gateway,
                 keys=KEYS,
+                attempt=ATTEMPT,
                 work=lambda _session: work_called.append(True),
             )
 
@@ -214,6 +220,7 @@ class AutonomousCycleTests(unittest.TestCase):
                 _frontier(_match(_candidate(1))),
                 gateway,
                 keys=KEYS,
+                attempt=ATTEMPT,
                 work=lambda _session: (_ for _ in ()).throw(
                     RuntimeError("work failed")
                 ),
@@ -230,6 +237,7 @@ class AutonomousCycleTests(unittest.TestCase):
                 _frontier(_match(_candidate(1), worker_id="worker-b")),
                 _Gateway(),
                 keys=KEYS,
+                attempt=ATTEMPT,
                 work=lambda _session: None,
             )
 
@@ -247,6 +255,7 @@ class AutonomousCycleTests(unittest.TestCase):
                 _frontier(inconsistent),
                 _Gateway(),
                 keys=KEYS,
+                attempt=ATTEMPT,
                 work=lambda _session: None,
             )
 
@@ -256,6 +265,103 @@ class AutonomousCycleTests(unittest.TestCase):
                 acknowledge_idempotency_key="same",
                 release_idempotency_key="release",
             )
+
+
+class PublicationSeparationTests(unittest.TestCase):
+    """Decision 3C: an attempt never consumes a candidate it published."""
+
+    def test_self_published_candidate_is_skipped_with_single_claim(self) -> None:
+        first = _match(_candidate(1))
+        second = _match(_candidate(2))
+        gateway = _Gateway()
+        attempt = AutonomousAttempt(
+            attempt_id="attempt-publisher",
+            published=frozenset({(first.candidate.task, first.candidate.role)}),
+        )
+
+        result = run_autonomous_cycle(
+            _frontier(first, second),
+            gateway,
+            keys=KEYS,
+            attempt=attempt,
+            work=lambda _session: "done",
+        )
+
+        self.assertEqual(CycleStatus.COMPLETED, result.status)
+        self.assertIs(result.selected, second)
+        self.assertEqual(1, result.claim_attempts)
+        self.assertEqual("attempt-publisher", result.attempt_id)
+        claims = [call for call in gateway.calls if call[0] == "claim"]
+        self.assertEqual(1, len(claims))
+        self.assertEqual(second.candidate.task, claims[0][1]["task"])
+        self.assertEqual(
+            [(first.candidate.task, first.candidate.role)],
+            [(item.task, item.role) for item in result.omissions],
+        )
+        self.assertIn("3C", result.omissions[0].reason)
+
+    def test_all_self_published_candidates_make_no_mutation(self) -> None:
+        only = _match(_candidate(1))
+        gateway = _Gateway()
+        attempt = AutonomousAttempt(
+            attempt_id="attempt-publisher",
+            published=frozenset({(only.candidate.task, only.candidate.role)}),
+        )
+
+        result = run_autonomous_cycle(
+            _frontier(only),
+            gateway,
+            keys=KEYS,
+            attempt=attempt,
+            work=lambda _session: self.fail("work must not run"),
+        )
+
+        self.assertEqual(CycleStatus.NO_CANDIDATE, result.status)
+        self.assertEqual(0, result.claim_attempts)
+        self.assertEqual([], gateway.calls)
+        self.assertEqual(1, len(result.omissions))
+
+    def test_same_task_other_role_is_not_excluded(self) -> None:
+        candidate = _candidate(1)
+        gateway = _Gateway()
+        attempt = AutonomousAttempt(
+            attempt_id="attempt-publisher",
+            published=frozenset({(candidate.task, Role.REVIEWER)}),
+        )
+
+        result = run_autonomous_cycle(
+            _frontier(_match(candidate)),
+            gateway,
+            keys=KEYS,
+            attempt=attempt,
+            work=lambda _session: "done",
+        )
+
+        self.assertEqual(CycleStatus.COMPLETED, result.status)
+        self.assertEqual((), result.omissions)
+
+    def test_attempt_is_required_and_validated(self) -> None:
+        with self.assertRaises(TypeError):
+            run_autonomous_cycle(  # type: ignore[call-arg]
+                _frontier(_match(_candidate(1))),
+                _Gateway(),
+                keys=KEYS,
+                work=lambda _session: None,
+            )
+        with self.assertRaisesRegex(TypeError, "AutonomousAttempt"):
+            run_autonomous_cycle(
+                _frontier(_match(_candidate(1))),
+                _Gateway(),
+                keys=KEYS,
+                attempt="attempt-1",  # type: ignore[arg-type]
+                work=lambda _session: None,
+            )
+        with self.assertRaisesRegex(ValueError, "attempt_id"):
+            AutonomousAttempt(attempt_id=" ")
+        with self.assertRaisesRegex(ValueError, "frozenset"):
+            AutonomousAttempt(attempt_id="a", published={("owner/repo#1", Role.IMPLEMENTER)})  # type: ignore[arg-type]
+        with self.assertRaisesRegex(ValueError, "Role"):
+            AutonomousAttempt(attempt_id="a", published=frozenset({("owner/repo#1", "implementer")}))  # type: ignore[arg-type]
 
 
 if __name__ == "__main__":
