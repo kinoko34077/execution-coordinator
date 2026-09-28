@@ -70,6 +70,21 @@ def roles_can_share_conflict_key(left: Role, right: Role) -> bool:
     return Role.REVIEWER in (left, right)
 
 
+def roles_can_share_task(left: Role, right: Role) -> bool:
+    """Return whether distinct role claims may coexist on one task.
+
+    Existing v1 role pairs remain compatible. Recovery is a successor-work
+    authority and therefore cannot race another non-reviewer role on the same
+    task. Review remains observationally compatible with recovery.
+    """
+
+    if left == right:
+        return False
+    if Role.REVIEWER in (left, right):
+        return True
+    return Role.RECOVERY not in (left, right)
+
+
 def same_worker_role_conflict(
     active: Claim,
     *,
