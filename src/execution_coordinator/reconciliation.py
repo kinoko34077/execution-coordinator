@@ -298,6 +298,10 @@ def _parse_publication(
     if value["requires_user_confirmation"] is not False:
         raise ValueError("publishable reconciliation work must not require user confirmation")
     reasons = _reason_codes(value["reason_codes"])
+    if role is Role.REVIEWER and "DIFFERENT_REVIEWER_REQUIRED" not in reasons:
+        raise ValueError(
+            "reviewer publication requires explicit different-reviewer reason evidence"
+        )
     scope = _nonempty(value["scope"], "scope")
     observed_at = _observed_at(value["observed_at"])
 
@@ -383,7 +387,11 @@ def _validate_projection(
         if isinstance(raw, dict):
             raw_task = raw.get("task_ref")
             raw_role = raw.get("role")
-            if isinstance(raw_task, str) and raw_role in {"reviewer", "recovery"}:
+            if (
+                isinstance(raw_task, str)
+                and isinstance(raw_role, str)
+                and raw_role in {"reviewer", "recovery"}
+            ):
                 projected_role = Role.REVIEWER if raw_role == "reviewer" else Role.RECOVERY
                 boundary = (raw_task, projected_role)
                 if boundary in seen_task_roles:
