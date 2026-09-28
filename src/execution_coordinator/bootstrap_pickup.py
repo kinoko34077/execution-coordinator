@@ -15,10 +15,19 @@ No selection logic lives here; this module never picks a candidate itself.
 
 from __future__ import annotations
 
+import argparse
+import importlib
 import json
+import os
+import platform
+import secrets
+import subprocess
+import sys
+import types
 import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from .agent import AgentSession, MutationGateway
@@ -297,3 +306,174 @@ def run_pickup(
         outcome["claim_id"] = session.claim_id
         outcome["session"] = session
     return outcome
+
+
+# ---------------------------------------------------------------------------
+# Common entry command for already-open chats (devflow#199, #190 Phase E).
+# Same command for every provider; provider differences only show up in the
+# probe results.  The session file is chat-local identity, never task truth.
+# ---------------------------------------------------------------------------
+
+
+
+def _command_ok(runner: Callable[..., Any], command: list[str]) -> bool:
+    try:
+        return runner(command, capture_output=True, timeout=20).returncode == 0
+    except Exception:
+        return False
+
+
+def probe_environment(
+    *,
+    token: str,
+    devflow_tools: Any,
+    repository_checkout: bool,
+    runner: Callable[..., Any] = subprocess.run,
+    system: Callable[[], str] = platform.system,
+    fetch: Callable[[str], bool] | None = None,
+) -> tuple[dict[str, bool], bool]:
+    """Run the Phase B probes for real.  Returns (probes, agents_md_read)."""
+
+    def default_fetch(url: str) -> bool:
+        try:
+            request = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"} if token else {})
+            with urllib.request.urlopen(request, timeout=20) as response:
+                response.read()
+            return True
+        except Exception:
+            return False
+
+    fetch = fetch or default_fetch
+    agents = fetch(f"https://api.github.com/repos/{DEVFLOW}/contents/AGENTS.md")
+    os_name = system()
+    probes = {name: False for name in devflow_tools.chat_worker_profile.PROBES}
+    probes.update(
+        {
+            "exec.python3": _command_ok(runner, [sys.executable, "--version"]),
+            "exec.git": _command_ok(runner, ["git", "--version"]),
+            "exec.node": _command_ok(runner, ["node", "--version"]),
+            "exec.unittest": _command_ok(runner, [sys.executable, "-c", "import unittest"]),
+            "fs.repository_checkout": repository_checkout,
+            "os.linux": os_name == "Linux",
+            "os.macos": os_name == "Darwin",
+            "os.windows": os_name == "Windows",
+            "net.github_api": agents,
+            "lane.github_actions": agents and bool(token),
+            "surface.github_read": agents,
+            # A token is the only write/dispatch surface this command uses.
+            "surface.github_write": agents and bool(token),
+            "surface.coordinator_claim": agents and bool(token),
+        }
+    )
+    return probes, agents
+
+
+def load_session(path: Path, worker_system: str, *, now: datetime, devflow_tools: Any) -> dict[str, Any]:
+    """Load or create the chat-local session file and advance the cycle."""
+
+    data: dict[str, Any] = {}
+    if path.exists():
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not str(data.get("worker_session_id", "")).startswith(worker_system + "-"):
+            raise ValueError("session file belongs to another worker_system")
+    else:
+        data = {
+            "worker_session_id": devflow_tools.chat_worker_profile.new_session_id(
+                worker_system, now.replace(microsecond=0), secrets.token_hex(3)
+            ),
+            "cycle": 0,
+        }
+    data["cycle"] = int(data.get("cycle", 0)) + 1
+    path.write_text(json.dumps(data, sort_keys=True) + "\n", encoding="utf-8")
+    return data
+
+
+def load_devflow_tools(devflow_path: str) -> Any:
+    root = str(Path(devflow_path).resolve())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    return types.SimpleNamespace(
+        chat_worker_profile=importlib.import_module("tools.chat_worker_profile"),
+        chat_worker_bootstrap=importlib.import_module("tools.chat_worker_bootstrap"),
+    )
+
+
+def main(argv: list[str] | None = None) -> int:
+    from .actions_gateway import ActionsMutationGateway
+    from .discovery import GitHubIssueReader
+    from .github_state import GitHubStateStore
+
+    parser = argparse.ArgumentParser(prog="python -m execution_coordinator.bootstrap_pickup")
+    sub = parser.add_subparsers(dest="command", required=True)
+    pick = sub.add_parser("pickup", help="one discovery cycle for a target repository")
+    pick.add_argument("--target", required=True, help="owner/name of the managed repository")
+    pick.add_argument("--worker-system", required=True, choices=("codex", "claude", "chatgpt"))
+    pick.add_argument("--devflow", required=True, help="path to a devflow checkout (contract tools)")
+    pick.add_argument("--session-file", default=".chat-worker-session.json")
+    pick.add_argument("--intent", default=None, help="the user's broad instruction (audit only)")
+    pick.add_argument("--repository-checkout", action="store_true", help="a target working tree is present")
+    pick.add_argument("--execute", action="store_true", help="claim + acknowledge a work disposition")
+    rel = sub.add_parser("release", help="release a claim obtained by pickup --execute")
+    rel.add_argument("--claim-id", required=True)
+    rel.add_argument("--generation", required=True, type=int)
+    rel.add_argument("--idempotency-key", required=True)
+    args = parser.parse_args(argv)
+
+    token = os.environ.get("GH_TOKEN") or os.environ.get("GITHUB_TOKEN") or ""
+    ec = "kinoko34077/execution-coordinator"
+    state = GitHubStateStore(token=token, repository=ec, issue_number=3)
+    if args.command == "release":
+        gateway = ActionsMutationGateway(token=token, repository=ec, state_reader=state.load_body)
+        gateway.mutate(
+            operation="release",
+            payload={"claim_id": args.claim_id, "generation": args.generation},
+            idempotency_key=args.idempotency_key,
+        )
+        print(json.dumps({"released": args.claim_id}))
+        return 0
+
+    tools = load_devflow_tools(args.devflow)
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    session = load_session(Path(args.session_file), args.worker_system, now=now, devflow_tools=tools)
+    probes, agents = probe_environment(token=token, devflow_tools=tools, repository_checkout=args.repository_checkout)
+    observation = {
+        "schema_version": tools.chat_worker_profile.OBSERVATION_SCHEMA,
+        "worker_system": args.worker_system,
+        "worker_session_id": session["worker_session_id"],
+        "cycle": session["cycle"],
+        "observed_at": _utc(now),
+        "probes": probes,
+    }
+    reader = GitHubIssueReader(token=token)
+    outcome = run_pickup(
+        target_repository=args.target,
+        observation=observation,
+        work_intent=args.intent,
+        devflow_tools=tools,
+        issue_reader=reader,
+        state_reader=state,
+        control_documents=list_control_documents(token, reader) if agents else (),
+        agents_md_read=agents,
+        now=now,
+        gateway_factory=(lambda: ActionsMutationGateway(token=token, repository=ec, state_reader=state.load_body))
+        if args.execute
+        else None,
+    )
+    live = outcome.get("session")
+    print(
+        json.dumps(
+            {
+                "result": outcome["result"],
+                "probes": probes,
+                "claim_id": outcome["claim_id"],
+                "generation": live.generation if live is not None else None,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
