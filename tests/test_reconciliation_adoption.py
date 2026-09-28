@@ -119,7 +119,7 @@ def _control_document(publications: list[dict[str, object]], *, repository: str 
         state="open",
         body=_control_body(publications, repository=repository),
         html_url="https://github.com/kinoko34077/devflow/issues/107",
-        title=f"[REPO] {repository}",
+        title=f"[REPO] {repository.split('/', 1)[1]}",
         author_association="OWNER",
     )
 
