@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 3 + RECONCILIATION DEMAND ADOPTION / ACCEPTED`
+`V0.1 + PHASE 3 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -179,6 +179,23 @@ explicit trusted Repository Control sources
 
 `compose_claimability_read()` preserves per-source discovery failures, validated runtime-state freshness metadata, claimability reasons and the existing claimable tuple. It does not rank, select, claim, publish, mutate Issue #3 or infer work from non-canonical sources.
 
+### Managed repository frontier enumeration
+
+Issue #60 provides the bounded Phase 1 read-only enumeration surface released
+by devflow Work Order #175. `enumerate_managed_frontier()` accepts only the
+exact `DurableIssueSource` identities supplied by live devflow bootstrap,
+normalizes them deterministically, and fails closed on invalid or duplicate
+managed-repository Control identities.
+
+The enumerator reads each exact Control/task Issue through one cached snapshot,
+combines the existing normal durable-candidate and reconciliation-publication
+validators, then reuses the Phase 0 state/claimability projection. Its result
+retains source inventory, source-input failures, discovery failures, runtime
+freshness, claimability reasons, and separate fresh versus `Role.RECOVERY`
+candidate views. It performs no ranking, capability matching, selection,
+claim/lease mutation, publication, scheduling, provider/controller work, or
+runtime Issue #3 mutation.
+
 ### Development Reconciliation demand adoption
 
 Issue #49 / PR #51 consumes the accepted devflow #159 `development-reconciliation-work.v1` projection from the trusted Repository Control.
@@ -286,7 +303,7 @@ Not implemented or not released by #49:
 - arbitrary free-form Issue/Work Order interpretation;
 - priority/dependency frontier ranking and self-selection;
 - capability/environment matching;
-- an autonomous discovery -> state -> claimability -> claim loop with ranking, selection or claim mutation; the Phase 0 read-only composition is owned by Issue #58;
+- an autonomous discovery -> state -> claimability -> claim loop with ranking, selection or claim mutation; the Phase 0 composition and Phase 1 managed-frontier enumeration remain read-only surfaces owned by Issues #58 and #60;
 - full `claim(..., expected_state, idempotency_key)` / structured failure-evidence conformance;
 - controller priority/capability/availability negotiation;
 - provider-specific worker selection/launch;
@@ -312,4 +329,4 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 
 Issue #49 / PR #51 remains accepted at the implementation layer. Issue #33's two residuals are now resolved: `resume`/lease semantics were confirmed against Protocol v1 without code churn, and the bounded real queue/renew pilot completed with Issue #3 restored to no active claims.
 
-Phase 0 Issue #58 is the one explicitly released read-only composition slice under devflow Work Order #175. After its exact-head review, merge, post-merge Verify and bounded read-only smoke, the next execution-coordination slice must still be selected explicitly by devflow Work Order #105. Ranking, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.
+Phase 0 Issue #58 / PR #59 is accepted at merged main `2bea4c5ee1ae4c85e6a54b3c095f9d6871f633aa`. Phase 1 Issue #60 adds only deterministic managed-frontier enumeration on top of that accepted read-only path; its source-input and discovery evidence remain fail-closed and runtime Issue #3 remains unchanged. After the Phase 1 exact-head review, merge, post-merge Verify and bounded read-only smoke, the next execution-coordination slice must still be selected explicitly by devflow Work Order #105. Ranking, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.

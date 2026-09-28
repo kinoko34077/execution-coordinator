@@ -48,6 +48,28 @@ def compose_claimability_read(
     """
 
     discovery = discover_claim_candidates(sources, issue_reader)
+    return compose_claimability_result(
+        discovery,
+        state_reader=state_reader,
+        now=now,
+        worker_id=worker_id,
+    )
+
+
+def compose_claimability_result(
+    discovery: DiscoveryResult,
+    *,
+    state_reader: StateReader,
+    now: datetime,
+    worker_id: str | None = None,
+) -> ComposedReadResult:
+    """Project an already-composed discovery result against runtime state.
+
+    Discovery may come from more than one trusted, read-only validator.  This
+    helper keeps Phase 0's state and claimability semantics in one place while
+    retaining every candidate and discovery failure supplied by the caller.
+    """
+
     state = get_state_result(state_reader)
     claimability = project_claimability(
         discovery.candidates,
