@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 3 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING / ACCEPTED`
+`V0.1 + PHASE 4 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + BOUNDED AUTONOMOUS CYCLE / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -18,6 +18,7 @@ Cross-repository authority:
 - Issue #44 / PR #45 own the additive runtime claimability-reason projection;
 - Issue #48 / PR #50 own runtime `GitHubStateStore` observed-authority identity hardening;
 - Issue #49 / PR #51 own accepted reviewer/recovery reconciliation-demand adoption;
+- Issue #66 / PR #67 own the bounded agent-first one-claim autonomous cycle;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 currently has no active claims. It retains historical generation/idempotency/audit evidence only.
@@ -234,6 +235,24 @@ worker's independent projection. The surface performs no selection, claim or
 lease mutation, scheduling, provider/controller work, repo-monitor work, or
 Issue #3 mutation.
 
+### Agent-first bounded autonomous cycle
+
+Issue #66 provides the bounded `run_autonomous_cycle()` execution boundary
+released by devflow Work Order #175. It consumes one already refreshed,
+worker-scoped `CapabilityMatchResult`, selects only its first deterministic
+eligible match, and submits at most one existing serialized claim. A claim
+rejection ends that cycle without trying a second candidate. A successful
+claim must be acknowledged before the caller's work callback runs, and the
+existing `AgentSession` lifecycle performs fencing and terminal release (or
+release-on-work-failure). The cycle returns typed `NO_CANDIDATE`,
+`CLAIM_REJECTED`, or `COMPLETED` results.
+
+The cycle does not refresh discovery/state/capability evidence, rank or
+schedule work, retry a rejected candidate, publish durable work, launch a
+provider/controller, monitor repositories, or add a second runtime authority.
+Issue #3 remains the only claim/lease authority, and callers must provide a
+fresh read result before starting a cycle.
+
 ### Development Reconciliation demand adoption
 
 Issue #49 / PR #51 consumes the accepted devflow #159 `development-reconciliation-work.v1` projection from the trusted Repository Control.
@@ -336,11 +355,11 @@ Implementation/review evidence:
 
 ## Known limitations / deferred protocol surface
 
-Not implemented or not released by #49:
+Not implemented or not released by #66:
 - GitHub-wide/frontier source selection beyond exact trusted Control inputs;
 - arbitrary free-form Issue/Work Order interpretation;
-- autonomous self-selection over the accepted priority/dependency frontier;
-- an autonomous discovery -> state -> claimability -> claim loop with ranking, selection or claim mutation; the Phase 0 composition and Phase 1 managed-frontier enumeration remain read-only surfaces owned by Issues #58 and #60;
+- autonomous refresh and self-selection over the full priority/dependency/capability frontier;
+- an autonomous discovery -> state -> claimability -> capability-refresh loop; Phase 4 only consumes a caller-supplied fresh match result and bounds the subsequent one-claim cycle;
 - full `claim(..., expected_state, idempotency_key)` / structured failure-evidence conformance;
 - controller priority/capability/availability negotiation;
 - provider-specific worker selection/launch;
@@ -360,10 +379,10 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 - devflow MCP remains read-only;
 - repo-monitor remains observer-only;
 - no discovery/publication result, execution claim, or eligibility projection overrides release/deploy/publication/credential/permission/destructive/user-decision confirmation boundaries;
-- #49 acceptance does not release any ranking/scheduler/provider/controller/repo-monitor slice.
+- #49 and #66 acceptance does not release any ranking/scheduler/provider/controller/repo-monitor slice.
 
 ## Next action
 
 Issue #49 / PR #51 remains accepted at the implementation layer. Issue #33's two residuals are now resolved: `resume`/lease semantics were confirmed against Protocol v1 without code churn, and the bounded real queue/renew pilot completed with Issue #3 restored to no active claims.
 
-Phase 0 Issue #58 / PR #59 is accepted at merged main `2bea4c5ee1ae4c85e6a54b3c095f9d6871f633aa`. Phase 1 Issue #60 / PR #61 is accepted at merged main `9b4d12f262defe4dcab49dbf607d98bea476807e`; its source-input and discovery evidence remain fail-closed and runtime Issue #3 remains unchanged. Phase 2 Issue #62 adds explicit dependency/frontier hard filtering and deterministic ranking, and Phase 3 Issue #64 adds only worker-local exact capability/environment matching on top of that read-only frontier. Neither slice selects, claims, schedules, launches providers/controllers, or mutates Issue #3. The next execution-coordination slice must still be selected explicitly by devflow Work Order #105; self-selection, scheduler/work stealing, automatic claim, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.
+Phase 0 Issue #58 / PR #59 is accepted at merged main `2bea4c5ee1ae4c85e6a54b3c095f9d6871f633aa`. Phase 1 Issue #60 / PR #61 is accepted at merged main `9b4d12f262defe4dcab49dbf607d98bea476807e`; its source-input and discovery evidence remain fail-closed and runtime Issue #3 remains unchanged. Phase 2 Issue #62 adds explicit dependency/frontier hard filtering and deterministic ranking, and Phase 3 Issue #64 adds only worker-local exact capability/environment matching on top of that read-only frontier. Phase 4 Issue #66 adds only the explicitly released one-worker, one-match, one-claim cycle on top of that supplied projection; it does not add refresh, retry, scheduling, provider/controller or repository-monitor authority. The next execution-coordination slice must still be selected explicitly by devflow Work Order #105; full self-selection, scheduler/work stealing, controller negotiation, provider launch/selection, repo-monitor work, Manual Session policy changes, and finer mutation-lane architecture remain separately gated.

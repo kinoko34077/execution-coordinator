@@ -10,6 +10,7 @@
 - `docs/superpowers/plans/2026-09-28-phase1-managed-frontier.md`
 - `docs/superpowers/plans/2026-09-28-phase2-frontier-ranking.md`
 - `docs/superpowers/plans/2026-09-28-phase3-capability-match.md`
+- `docs/superpowers/plans/2026-09-28-phase4-autonomous-cycle.md`
 
 ## Runtime entry points
 
@@ -21,6 +22,7 @@
 - `src/execution_coordinator/managed_frontier.py` — deterministic read-only enumeration of normal and reconciliation demand from exact managed-repository Control identities.
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
+- `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
@@ -49,6 +51,10 @@
 ## Phase 3 exact capability/environment matching
 
 - Issue #64 — bounded `match_ranked_frontier()` / `match_ranked_frontier_for_workers()` projection with versioned worker and candidate evidence, exact subset matching, per-worker fail-closed omissions, and a separate recovery track; no ownership or runtime mutation.
+
+## Phase 4 agent-first autonomous cycle
+
+- Issue #66 — bounded `run_autonomous_cycle()` boundary over one already refreshed `CapabilityMatchResult`: first eligible match only, one claim attempt, no fallback after rejection, acknowledge-before-work, and existing `AgentSession` release/fencing. No refresh, scheduler, provider/controller, repo-monitor or second authority.
 
 ## Future follow-up candidate
 
