@@ -77,12 +77,16 @@ def same_worker_role_conflict(
     role: Role,
     worker_id: str,
 ) -> bool:
-    """Reject one logical worker acting as implementer and reviewer on a task."""
+    """Reject one worker as both task executor/recovery owner and reviewer."""
 
+    execution_roles = {Role.IMPLEMENTER, Role.RECOVERY}
     return (
         active.task == task
         and active.worker_id == worker_id
-        and {active.role, role} == {Role.IMPLEMENTER, Role.REVIEWER}
+        and (
+            (active.role in execution_roles and role is Role.REVIEWER)
+            or (role in execution_roles and active.role is Role.REVIEWER)
+        )
     )
 
 
