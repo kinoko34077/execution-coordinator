@@ -228,6 +228,13 @@ class GitHubStateStoreTests(unittest.TestCase):
         with self.assertRaises(self._state_store_error_type()):
             self.store.save_body("must-not-be-trusted")
 
+    def test_save_does_not_mutate_when_preflight_identity_mismatches(self) -> None:
+        _Handler.get_response_repository = "other/repo"
+
+        with self.assertRaises(self._state_store_error_type()):
+            self.store.save_body("must-not-be-written")
+        self.assertEqual("initial body", _Handler.body)
+
     def test_comment_posts_durable_event(self) -> None:
         self.store.add_comment("CLAIMED example")
         self.assertEqual(["CLAIMED example"], _Handler.comments)
@@ -244,6 +251,13 @@ class GitHubStateStoreTests(unittest.TestCase):
 
         with self.assertRaises(self._state_store_error_type()):
             self.store.add_comment("must-not-be-trusted")
+
+    def test_comment_does_not_mutate_when_preflight_identity_mismatches(self) -> None:
+        _Handler.get_response_repository = "other/repo"
+
+        with self.assertRaises(self._state_store_error_type()):
+            self.store.add_comment("must-not-be-written")
+        self.assertEqual([], _Handler.comments)
 
     def test_non_2xx_patch_raises_api_error(self) -> None:
         _Handler.fail_patch = True
