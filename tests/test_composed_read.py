@@ -3,7 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from execution_coordinator.discovery import DurableIssueSource, IssueDocument
 from execution_coordinator.engine import claim
@@ -199,6 +199,31 @@ class ComposedReadTests(unittest.TestCase):
 
         self.assertEqual(result.claimable, ())
         self.assertEqual(result.claimability[0].reason, ClaimabilityReason.BLOCKED_LIVE)
+        self.assertEqual(store.write_calls, 0)
+
+    def test_expired_unswept_blocker_remains_nonclaimable_in_composed_read(self) -> None:
+        reader, events = _readers()
+        active = claim(
+            CoordinatorState.empty(),
+            task="owner/repo#7",
+            role=Role.IMPLEMENTER,
+            worker_id="worker-a",
+            conflict_keys=(),
+            now=NOW - timedelta(minutes=30),
+            idempotency_key="expired-implementer",
+            lease_minutes=1,
+        ).state
+        store = _StateReader(render_issue_body("", active), events)
+
+        result = compose_claimability_read(
+            (CONTROL,),
+            issue_reader=reader,
+            state_reader=store,
+            now=NOW,
+        )
+
+        self.assertEqual(result.claimable, ())
+        self.assertEqual(result.claimability[0].reason, ClaimabilityReason.EXPIRED_UNSWEPT)
         self.assertEqual(store.write_calls, 0)
 
 
