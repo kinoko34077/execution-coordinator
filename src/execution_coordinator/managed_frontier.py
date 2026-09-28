@@ -114,7 +114,6 @@ def _normalize_sources(
 
     ordered = sorted(valid, key=lambda source: (source.repository, source.issue_number))
     unique: list[DurableIssueSource] = []
-    seen_repositories: set[str] = set()
     seen_exact: set[tuple[str, int]] = set()
     for source in ordered:
         exact_key = (source.repository, source.issue_number)
@@ -128,18 +127,46 @@ def _normalize_sources(
             continue
         seen_exact.add(exact_key)
         unique.append(source)
-        if source.repository in seen_repositories:
-            failures.append(
-                FrontierSourceFailure(
-                    source_ref=_source_ref(source),
-                    reason="duplicate managed repository Control identity",
-                )
-            )
-            continue
-        seen_repositories.add(source.repository)
 
     failures.sort(key=lambda failure: (failure.source_ref, failure.reason))
     return tuple(unique), tuple(failures)
+
+
+def _managed_identity_failures(
+    sources: tuple[DurableIssueSource, ...],
+    reader: IssueReader,
+) -> tuple[FrontierSourceFailure, ...]:
+    """Fail closed when two Controls claim the same managed repository.
+
+    Every Repository Control lives in the devflow repository, so the source
+    repository cannot identify the managed repository.  The canonical
+    ``[REPO] <name>`` title of the (cached) Control snapshot does.  Controls
+    that cannot be read, or are not titled as Controls, are left to the
+    discovery validators, which report them as per-source failures.
+    """
+
+    by_identity: dict[str, list[DurableIssueSource]] = {}
+    for source in sources:
+        try:
+            document = reader.read_issue(source.repository, source.issue_number)
+        except Exception:
+            continue
+        title = document.title.strip()
+        if not title.startswith("[REPO] "):
+            continue
+        identity = title[len("[REPO] "):].strip().casefold()
+        by_identity.setdefault(identity, []).append(source)
+    failures = [
+        FrontierSourceFailure(
+            source_ref=_source_ref(source),
+            reason="duplicate managed repository Control identity",
+        )
+        for group in by_identity.values()
+        if len(group) > 1
+        for source in group
+    ]
+    failures.sort(key=lambda failure: (failure.source_ref, failure.reason))
+    return tuple(failures)
 
 
 def _merge_discovery(
@@ -176,6 +203,13 @@ def enumerate_managed_frontier(
         )
 
     reader = _CachedIssueReader(issue_reader)
+    identity_failures = _managed_identity_failures(normalized, reader)
+    if identity_failures:
+        return ManagedFrontierResult(
+            sources=normalized,
+            source_failures=identity_failures,
+            read=None,
+        )
     normal = discover_claim_candidates(normalized, reader)
     reconciliation = discover_reconciliation_claim_candidates(normalized, reader)
     read = compose_claimability_result(
