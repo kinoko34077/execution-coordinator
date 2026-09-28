@@ -229,3 +229,65 @@ class RunPickupWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _Profile:
+    PROBES = {name: None for name in (
+        "exec.python3", "exec.git", "exec.node", "exec.unittest", "fs.repository_checkout",
+        "os.linux", "os.macos", "os.windows", "net.github_api", "lane.github_actions",
+        "surface.github_read", "surface.github_write", "surface.coordinator_claim",
+    )}
+
+    @staticmethod
+    def new_session_id(system, started_at, entropy):
+        return f"{system}-{started_at.strftime('%Y%m%dT%H%M%SZ')}-{entropy}"
+
+
+class CommandTests(unittest.TestCase):
+    tools = types.SimpleNamespace(chat_worker_profile=_Profile)
+
+    def test_probes_reflect_real_checks_only(self):
+        from execution_coordinator.bootstrap_pickup import probe_environment
+
+        class _Done:
+            def __init__(self, code):
+                self.returncode = code
+
+        def runner(command, **_kw):
+            return _Done(0 if command[0] != "node" else 1)
+
+        probes, agents = probe_environment(token="", devflow_tools=self.tools, repository_checkout=False,
+                                           runner=runner, system=lambda: "Linux", fetch=lambda url: True)
+        self.assertTrue(agents)
+        self.assertTrue(probes["exec.python3"])
+        self.assertFalse(probes["exec.node"])
+        self.assertTrue(probes["os.linux"])
+        # Without a token there is no write or claim surface, whatever the provider.
+        self.assertFalse(probes["surface.github_write"])
+        self.assertFalse(probes["surface.coordinator_claim"])
+
+    def test_unreachable_github_yields_no_surfaces(self):
+        from execution_coordinator.bootstrap_pickup import probe_environment
+
+        probes, agents = probe_environment(token="t", devflow_tools=self.tools, repository_checkout=False,
+                                           runner=lambda *a, **k: (_ for _ in ()).throw(OSError()),
+                                           system=lambda: "Windows", fetch=lambda url: False)
+        self.assertFalse(agents)
+        self.assertFalse(any(probes[name] for name in probes if name.startswith(("surface.", "exec."))))
+        self.assertTrue(probes["os.windows"])
+
+    def test_session_file_is_created_once_and_cycle_advances(self):
+        import tempfile
+        from pathlib import Path
+
+        from execution_coordinator.bootstrap_pickup import load_session
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "session.json"
+            first = load_session(path, "codex", now=NOW, devflow_tools=self.tools)
+            second = load_session(path, "codex", now=NOW, devflow_tools=self.tools)
+            self.assertEqual(first["worker_session_id"], second["worker_session_id"])
+            self.assertEqual((1, 2), (first["cycle"], second["cycle"]))
+            self.assertTrue(first["worker_session_id"].startswith("codex-20260928T160000Z-"))
+            with self.assertRaises(ValueError):
+                load_session(path, "claude", now=NOW, devflow_tools=self.tools)
