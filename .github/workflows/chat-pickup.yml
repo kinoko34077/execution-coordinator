@@ -1,0 +1,41 @@
+name: chat worker pickup
+
+# Actions-side transport for manually-started chat workers (devflow#205).
+# Comment text is untrusted: it is read from the event JSON by Python and
+# never interpolated into shell commands.
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: write
+  actions: write
+
+jobs:
+  pickup:
+    if: >-
+      !github.event.issue.pull_request &&
+      (startsWith(github.event.comment.body, '/pickup') || startsWith(github.event.comment.body, '/release')) &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    concurrency:
+      group: chat-pickup-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    env:
+      PYTHONPATH: src
+      DEVFLOW_PATH: devflow
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: kinoko34077/devflow
+          path: devflow
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.11'
+      - name: Run pickup command
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
+        run: python -m execution_coordinator.actions_pickup
