@@ -13,6 +13,9 @@ from .discovery import (
     IssueDocument,
     IssueReader,
     TRUSTED_AUTHOR_ASSOCIATIONS,
+    _required_section,
+    _sections,
+    _strip_code_value,
 )
 from .github_state import GitHubApiError
 from .model import Role
@@ -359,6 +362,22 @@ def _candidates_from_control(
     repository_name = repository.split("/", 1)[1]
     if document.title != f"[REPO] {repository_name}":
         raise ValueError("Repository Control title/repository identity mismatch")
+
+    sections = _sections(document.body)
+    control_repository = _strip_code_value(
+        _required_section(sections, ("repository",), "Control Repository")
+    )
+    if control_repository != repository:
+        raise ValueError("Control Repository does not match reconciliation projection")
+    repository_state = _strip_code_value(
+        _required_section(sections, ("repository state",), "Control Repository State")
+    )
+    if repository_state != "ACTIVE":
+        raise ValueError("Control Repository State is not ACTIVE")
+    next_action = _required_section(sections, ("next action",), "Control Next Action")
+    if "[USER_DECISION]" in next_action or "[HUMAN_GATE]" in next_action:
+        raise ValueError("Control Next Action contains a current user or Human Gate")
+
     publications = payload.get("publications")
     if not isinstance(publications, list):
         raise ValueError("reconciliation projection publications must be an array")
