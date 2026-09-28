@@ -61,34 +61,24 @@ class _Handler(BaseHTTPRequestHandler):
             payload["updated_at"] = type(self).updated_at
         return payload
 
-    def _parse_issue_path(self) -> tuple[str, int] | None:
-        parts = self.path.strip("/").split("/")
-        if len(parts) != 5 or parts[0] != "repos" or parts[3] != "issues":
-            return None
-        try:
-            number = int(parts[4])
-        except ValueError:
-            return None
-        return f"{parts[1]}/{parts[2]}", number
-
     def do_GET(self) -> None:  # noqa: N802
         expected_path = "/repos/owner/repo/issues/9"
+        foreign_path = "/repos/other/repo/issues/10"
         if self.path == expected_path and type(self).get_redirect_location is not None:
             self._redirect(type(self).get_redirect_location)
-            return
-
-        parsed = self._parse_issue_path()
-        if parsed is None:
-            self._json(404, {"message": "not found"})
             return
 
         if self.path == expected_path:
             repository = type(self).get_response_repository
             number = type(self).get_response_number
             body = type(self).body
-        else:
-            repository, number = parsed
+        elif self.path == foreign_path:
+            repository = "other/repo"
+            number = 10
             body = "foreign body"
+        else:
+            self._json(404, {"message": "not found"})
+            return
 
         self._json(
             200,
