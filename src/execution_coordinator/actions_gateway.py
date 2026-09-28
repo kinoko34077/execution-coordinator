@@ -10,6 +10,7 @@ from urllib.request import Request, urlopen
 from .engine import CoordinationError
 from .github_state import GitHubApiError
 from .model import MutationResult
+from .mutate import REJECTION_ANNOTATION_TITLE
 from .snapshot import parse_issue_body
 
 
@@ -17,8 +18,14 @@ class MutationRunRejected(CoordinationError):
     """The serialized mutation run concluded without committing authority.
 
     A failed or cancelled run makes no authority change (see #33), so it is a
-    rejection of this mutation, never a success.
+    rejection of this mutation, never a success.  ``error_class`` carries the
+    typed engine rejection (e.g. ``ClaimConflict``) when the run published
+    one; it is ``None`` when no typed reason could be read back.
     """
+
+    def __init__(self, message: str, *, error_class: str | None = None) -> None:
+        super().__init__(message)
+        self.error_class = error_class
 
 
 class MutationOutcomeUnknown(RuntimeError):
@@ -138,6 +145,36 @@ class ActionsMutationGateway:
                 )
             self._sleep(self._poll_interval)
 
+    def _rejection_reason(self, run_id: int) -> tuple[str, str] | None:
+        """Best-effort read of the typed rejection annotation of a failed run.
+
+        Any read problem yields ``None``: the run is still a rejection, only
+        without a typed reason.
+        """
+
+        try:
+            jobs = self._request("GET", f"{self._repo_url}/actions/runs/{run_id}/jobs")
+            for job in (jobs or {}).get("jobs", []) if isinstance(jobs, dict) else []:
+                job_id = job.get("id") if isinstance(job, dict) else None
+                if type(job_id) is not int:
+                    continue
+                annotations = self._request(
+                    "GET", f"{self._repo_url}/check-runs/{job_id}/annotations"
+                )
+                for annotation in annotations if isinstance(annotations, list) else []:
+                    if not isinstance(annotation, dict):
+                        continue
+                    if annotation.get("title") != REJECTION_ANNOTATION_TITLE:
+                        continue
+                    record = json.loads(annotation.get("message") or "")
+                    error_class = record.get("error_class")
+                    message = record.get("message")
+                    if isinstance(error_class, str) and isinstance(message, str):
+                        return error_class, message
+        except (GitHubApiError, ValueError, AttributeError, TypeError):
+            return None
+        return None
+
     def mutate(
         self,
         *,
@@ -156,8 +193,15 @@ class ActionsMutationGateway:
                 raise MutationOutcomeUnknown(
                     f"run {run_id} concluded {conclusion} but its idempotency record exists"
                 )
+            reason = self._rejection_reason(run_id) if conclusion == "failure" else None
+            if reason is None:
+                raise MutationRunRejected(
+                    f"serialized mutation run {run_id} concluded {conclusion}"
+                )
+            error_class, detail = reason
             raise MutationRunRejected(
-                f"serialized mutation run {run_id} concluded {conclusion}"
+                f"serialized mutation run {run_id} rejected: {error_class}: {detail}",
+                error_class=error_class,
             )
         if record is None:
             raise MutationOutcomeUnknown(

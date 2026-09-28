@@ -164,6 +164,28 @@ def _build_store_from_env() -> GitHubStateStore:
     return GitHubStateStore(token=token, repository=repository, issue_number=issue_number)
 
 
+REJECTION_ANNOTATION_TITLE = "execution-coordinator-rejection"
+
+
+def _escape_annotation(value: str) -> str:
+    return value.replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def rejection_annotation(exc: BaseException) -> str:
+    """Render a machine-readable rejection as a GitHub Actions annotation.
+
+    Only the exception class and its (already sanitized) message are
+    emitted, so callers can distinguish e.g. ``ClaimConflict`` from other
+    failures without reading job logs.  It never carries payload or tokens.
+    """
+
+    record = json.dumps(
+        {"error_class": type(exc).__name__, "message": str(exc)[:500]},
+        sort_keys=True,
+    )
+    return f"::error title={REJECTION_ANNOTATION_TITLE}::{_escape_annotation(record)}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Apply one serialized execution-coordinator mutation")
     parser.add_argument("--operation", required=True)
@@ -183,6 +205,7 @@ def main(argv: list[str] | None = None) -> int:
         )
     except (ValueError, GitHubApiError, RuntimeError) as exc:
         print(f"mutation failed: {exc}", file=sys.stderr)
+        print(rejection_annotation(exc))
         return 2
     print(
         json.dumps(
