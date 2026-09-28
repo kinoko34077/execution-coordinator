@@ -14,6 +14,7 @@
 - `src/execution_coordinator/engine.py` — pure claim/lease/fencing state transitions.
 - `src/execution_coordinator/snapshot.py` — strict system-Issue snapshot codec with retention-order preservation.
 - `src/execution_coordinator/github_state.py` — GitHub Issue REST state adapter.
+- `src/execution_coordinator/frontier.py` — read-only composition of trusted discovery, runtime state and claimability projections.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
@@ -26,6 +27,10 @@
 - post-merge Verify run `36266236803` — PASS.
 - merged-main claim smoke `36266294818` — PASS.
 - merged-main release smoke `36266348606` — PASS; Issue #3 returns to no active claims.
+
+## Phase 0 composed-read slice
+
+- Issue #58 — bounded `compose_claimability_read()` path from explicit trusted Control discovery through validated runtime state to existing claimability projections; no runtime mutation.
 
 ## Phase 3 follow-up candidate
 
