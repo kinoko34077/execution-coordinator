@@ -302,6 +302,9 @@ def rank_managed_frontier(
         if now > item.fresh_until:
             omissions.append(_omission(candidate, "ranking metadata is stale"))
             continue
+        if item.ready_at is not None and item.ready_at > now:
+            omissions.append(_omission(candidate, "candidate ready_at is in the future"))
+            continue
         if not item.dependency_ready:
             omissions.append(_omission(candidate, "dependency frontier is not ready"))
             continue
@@ -328,4 +331,3 @@ def rank_managed_frontier(
         source_failures=frontier.source_failures,
         discovery_failures=discovery_failures,
     )
-

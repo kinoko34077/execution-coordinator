@@ -157,14 +157,16 @@ class RankingTests(unittest.TestCase):
         dependency = _candidate(3)
         stale = _candidate(4)
         untrusted = _candidate(5)
+        future = _candidate(6)
         frontier = _frontier(
-            (missing, blocked, dependency, stale, untrusted),
+            (missing, blocked, dependency, stale, untrusted, future),
             reasons={
                 missing: ClaimabilityReason.CLAIMABLE,
                 blocked: ClaimabilityReason.BLOCKED_LIVE,
                 dependency: ClaimabilityReason.CLAIMABLE,
                 stale: ClaimabilityReason.CLAIMABLE,
                 untrusted: ClaimabilityReason.CLAIMABLE,
+                future: ClaimabilityReason.CLAIMABLE,
             },
         )
 
@@ -175,18 +177,20 @@ class RankingTests(unittest.TestCase):
                 _metadata(dependency, dependency_ready=False, dependency_order=None),
                 _metadata(stale, fresh_until=NOW - timedelta(seconds=1)),
                 _metadata(untrusted, source_ref="kinoko34077/devflow#999"),
+                _metadata(future, ready_at=NOW + timedelta(minutes=1)),
             ),
             now=NOW,
         )
 
         self.assertEqual(result.ranked, ())
-        self.assertEqual(len(result.omissions), 5)
+        self.assertEqual(len(result.omissions), 6)
         reasons = {omission.task: omission.reason for omission in result.omissions}
         self.assertIn("ranking metadata is missing", reasons[missing.task])
         self.assertIn("runtime claimability is BLOCKED_LIVE", reasons[blocked.task])
         self.assertIn("dependency", reasons[dependency.task])
         self.assertIn("stale", reasons[stale.task])
         self.assertIn("source", reasons[untrusted.task])
+        self.assertIn("future", reasons[future.task])
 
     def test_mismatched_fingerprint_and_duplicate_metadata_fail_closed(self) -> None:
         candidate = _candidate(1)
