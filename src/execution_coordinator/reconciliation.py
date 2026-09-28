@@ -356,7 +356,8 @@ def _candidates_from_control(
     repository = payload.get("repository")
     if not isinstance(repository, str) or _REPOSITORY.fullmatch(repository) is None:
         raise ValueError("reconciliation projection repository must be owner/repository")
-    if document.title != f"[REPO] {repository}":
+    repository_name = repository.split("/", 1)[1]
+    if document.title != f"[REPO] {repository_name}":
         raise ValueError("Repository Control title/repository identity mismatch")
     publications = payload.get("publications")
     if not isinstance(publications, list):
