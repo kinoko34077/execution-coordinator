@@ -6,7 +6,7 @@ import unittest
 from datetime import datetime, timezone
 
 from execution_coordinator.discovery import DurableIssueSource, IssueDocument
-from execution_coordinator.engine import claim
+from execution_coordinator.engine import ClaimConflict, claim
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.query import list_claimable
 from execution_coordinator.reconciliation import (
@@ -28,9 +28,11 @@ def _digest(body: str) -> str:
 
 
 def _publication_id(publication: dict[str, object]) -> str:
+    freshness = publication["freshness"]
+    assert isinstance(freshness, dict)
     identity = {
         "schema_version": publication["schema_version"],
-        "source_contract_version": publication["freshness"]["source_contract_version"],
+        "source_contract_version": freshness["source_contract_version"],
         "task_ref": publication["task_ref"],
         "task_body_sha256": publication["task_body_sha256"],
         "entry_ref": publication["entry_ref"],
@@ -158,7 +160,7 @@ class ReconciliationAdoptionTests(unittest.TestCase):
         self.assertEqual(candidate.task, f"{REPOSITORY}#7")
         self.assertEqual(candidate.role, Role.REVIEWER)
         self.assertEqual(candidate.entry_ref, f"https://github.com/{REPOSITORY}/issues/7")
-        self.assertEqual(candidate.conflict_keys, (f"repo:{REPOSITORY}",))
+        self.assertEqual(candidate.conflict_keys, ())
         self.assertTrue(candidate.scope_ready)
         self.assertFalse(candidate.blocked)
         self.assertFalse(candidate.requires_user_confirmation)
@@ -170,6 +172,7 @@ class ReconciliationAdoptionTests(unittest.TestCase):
         self.assertEqual(result.failures, ())
         candidate = result.candidates[0]
         self.assertEqual(candidate.role, Role.RECOVERY)
+        self.assertEqual(candidate.conflict_keys, ())
 
         claimed = claim(
             CoordinatorState.empty(),
@@ -264,30 +267,40 @@ class ReconciliationAdoptionTests(unittest.TestCase):
         self.assertEqual(len(result.failures), 1)
         self.assertIn("publication_id", result.failures[0].reason)
 
-    def test_recovery_candidate_respects_existing_runtime_conflict_behavior(self) -> None:
+    def test_recovery_candidate_is_blocked_by_live_nonreviewer_on_same_task(self) -> None:
         reader = _Reader(_control_document([_publication("recovery")]), _task_document())
         candidate = discover_reconciliation_claim_candidates((CONTROL_SOURCE,), reader).candidates[0]
         active = claim(
             CoordinatorState.empty(),
-            task="owner/repo#99",
+            task=f"{REPOSITORY}#7",
             role=Role.IMPLEMENTER,
             worker_id="worker-active",
-            conflict_keys=(f"repo:{REPOSITORY}",),
+            conflict_keys=(),
             now=datetime(2026, 9, 28, 5, 0, tzinfo=timezone.utc),
             idempotency_key="active-claim",
         ).state
 
         self.assertEqual(list_claimable((candidate,), active), ())
+        with self.assertRaises(ClaimConflict):
+            claim(
+                active,
+                task=candidate.task,
+                role=candidate.role,
+                worker_id="worker-recovery",
+                conflict_keys=candidate.conflict_keys,
+                now=datetime(2026, 9, 28, 5, 1, tzinfo=timezone.utc),
+                idempotency_key="recovery-race",
+            )
 
-    def test_reviewer_candidate_remains_compatible_with_implementation_conflict_key(self) -> None:
+    def test_reviewer_candidate_can_coexist_with_recovery_or_implementation_on_same_task(self) -> None:
         reader = _Reader(_control_document([_publication("reviewer")]), _task_document())
         candidate = discover_reconciliation_claim_candidates((CONTROL_SOURCE,), reader).candidates[0]
         active = claim(
             CoordinatorState.empty(),
-            task="owner/repo#99",
+            task=f"{REPOSITORY}#7",
             role=Role.IMPLEMENTER,
             worker_id="worker-active",
-            conflict_keys=(f"repo:{REPOSITORY}",),
+            conflict_keys=(),
             now=datetime(2026, 9, 28, 5, 0, tzinfo=timezone.utc),
             idempotency_key="active-claim",
         ).state
