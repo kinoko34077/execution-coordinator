@@ -8,6 +8,8 @@
 
 - `docs/superpowers/plans/2026-09-27-v01-agent-first-core.md`
 - `docs/superpowers/plans/2026-09-28-phase1-managed-frontier.md`
+- `docs/superpowers/plans/2026-09-28-phase2-frontier-ranking.md`
+- `docs/superpowers/plans/2026-09-28-phase3-capability-match.md`
 
 ## Runtime entry points
 
@@ -18,6 +20,7 @@
 - `src/execution_coordinator/frontier.py` — read-only composition of trusted discovery, runtime state and claimability projections.
 - `src/execution_coordinator/managed_frontier.py` — deterministic read-only enumeration of normal and reconciliation demand from exact managed-repository Control identities.
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.
+- `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
@@ -43,7 +46,11 @@
 
 - Issue #62 — bounded `rank_managed_frontier()` path with versioned provenance-bound metadata, explicit dependency/claimability hard filters, deterministic lexicographic ordering, omission evidence, and a separate recovery track; no ownership or runtime mutation.
 
-## Phase 3 follow-up candidate
+## Phase 3 exact capability/environment matching
+
+- Issue #64 — bounded `match_ranked_frontier()` / `match_ranked_frontier_for_workers()` projection with versioned worker and candidate evidence, exact subset matching, per-worker fail-closed omissions, and a separate recovery track; no ownership or runtime mutation.
+
+## Future follow-up candidate
 
 - Issue #10 — extends the accepted acknowledge-before-work adapter over existing progress/wait/resume/fail runtime operations.
 - The candidate is not accepted until exact-head CI, formal Review, merge, post-merge Verify, and merged-main smoke complete.
