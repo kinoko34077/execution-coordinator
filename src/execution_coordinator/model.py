@@ -14,6 +14,7 @@ class Role(StrEnum):
     REVIEWER = "reviewer"
     VERIFIER = "verifier"
     INTEGRATOR = "integrator"
+    RECOVERY = "recovery"
 
 
 class ExecutionState(StrEnum):
