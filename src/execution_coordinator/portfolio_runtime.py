@@ -23,6 +23,7 @@ _HUMAN_TOKENS = ("[HUMAN_GATE]", "[USER_DECISION]")
 
 @dataclass(frozen=True, slots=True)
 class PortfolioRuntimeRead:
+    observed_at: datetime
     frontier: ManagedFrontierResult
     ranked: RankedFrontierResult | None
     requirements: tuple[CandidateRequirements, ...]
@@ -84,6 +85,7 @@ def read_portfolio_runtime(
     )
     if frontier.read is None:
         return PortfolioRuntimeRead(
+            observed_at=now,
             frontier=frontier,
             ranked=None,
             requirements=(),
@@ -93,6 +95,7 @@ def read_portfolio_runtime(
 
     if frontier.read.discovery.failures:
         return PortfolioRuntimeRead(
+            observed_at=now,
             frontier=frontier,
             ranked=None,
             requirements=(),
@@ -116,6 +119,7 @@ def read_portfolio_runtime(
                 metadata_by_key[key] = item
     except PortfolioMetadataError as exc:
         return PortfolioRuntimeRead(
+            observed_at=now,
             frontier=frontier,
             ranked=None,
             requirements=(),
@@ -126,6 +130,7 @@ def read_portfolio_runtime(
     fresh_keys = {(item.task, item.role) for item in frontier.fresh_candidates}
     if set(metadata_by_key) != fresh_keys:
         return PortfolioRuntimeRead(
+            observed_at=now,
             frontier=frontier,
             ranked=None,
             requirements=(),
@@ -147,6 +152,7 @@ def read_portfolio_runtime(
         )
     )
     return PortfolioRuntimeRead(
+        observed_at=now,
         frontier=frontier,
         ranked=ranked,
         requirements=requirements,
