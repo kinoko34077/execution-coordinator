@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Callable, Protocol, TypeVar
 
-from .model import ExecutionState, MutationResult, Role, WaitReason
+from .model import Claim, ExecutionState, MutationResult, Role, WaitReason
 
 
 class MutationGateway(Protocol):
@@ -59,6 +59,39 @@ class AgentSession:
         self._execution_state: ExecutionState | None = None
         self._fenced = False
         self._released = False
+
+    @classmethod
+    def from_current_claim(
+        cls,
+        gateway: MutationGateway,
+        claim: Claim,
+        *,
+        expected_task: str,
+        expected_role: Role | str,
+        expected_worker_id: str,
+    ) -> "AgentSession":
+        if not isinstance(claim, Claim):
+            raise TypeError("claim must be a Claim")
+        role = Role(expected_role)
+        if claim.task != expected_task:
+            raise ValueError("current claim task does not match expected task")
+        if claim.role is not role:
+            raise ValueError("current claim role does not match expected role")
+        if claim.worker_id != expected_worker_id:
+            raise ValueError("current claim worker does not match expected worker")
+        session = cls(
+            gateway,
+            task=claim.task,
+            role=claim.role,
+            worker_id=claim.worker_id,
+            conflict_keys=claim.conflict_keys,
+            base_sha=claim.base_sha,
+            branch=claim.branch,
+        )
+        session._claim_id = claim.claim_id
+        session._generation = claim.generation
+        session._execution_state = claim.state
+        return session
 
     @property
     def claim_id(self) -> str | None:

@@ -429,6 +429,33 @@ class AgentSessionTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "fenced"):
             session.progress(idempotency_key="progress-after-fence")
 
+    def test_from_current_claim_reattaches_exact_authority(self) -> None:
+        gateway = _Gateway()
+        original = self._session(gateway)
+        original.claim(idempotency_key="claim-reattach")
+        state = parse_issue_body(gateway.store.body)
+        claim = next(iter(state.claims.values()))
+
+        attached = AgentSession.from_current_claim(
+            gateway,
+            claim,
+            expected_task="kinoko34077/example#1",
+            expected_role=Role.IMPLEMENTER,
+            expected_worker_id="worker-a",
+        )
+        attached.acknowledge(idempotency_key="ack-reattach")
+        self.assertEqual(claim.claim_id, attached.claim_id)
+        self.assertEqual(claim.generation, attached.generation)
+
+        with self.assertRaisesRegex(ValueError, "worker"):
+            AgentSession.from_current_claim(
+                gateway,
+                claim,
+                expected_task="kinoko34077/example#1",
+                expected_role=Role.IMPLEMENTER,
+                expected_worker_id="worker-b",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
