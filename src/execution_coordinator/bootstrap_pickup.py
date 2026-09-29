@@ -342,6 +342,7 @@ def run_pickup(
     target_repository: str | None,
     observation: dict[str, Any],
     work_intent: str | None,
+    accepted_work_classes: tuple[str, ...] | None = None,
     devflow_tools: Any,
     issue_reader: IssueReader,
     state_reader: StateReader,
@@ -361,6 +362,9 @@ def run_pickup(
     request = devflow_tools.chat_worker_profile.build_request(
         observation, target_repository=target_repository, work_intent=work_intent, now=now
     )
+    if accepted_work_classes is not None:
+        request["accepted_work_classes"] = list(accepted_work_classes)
+        request = devflow_tools.chat_worker_bootstrap.normalize_request(request)
     worker_id = f"{request['worker_system']}:{request['worker_session_id']}"
     evidence, candidates = gather_evidence(
         GatherInputs(
@@ -494,6 +498,7 @@ def main(argv: list[str] | None = None) -> int:
     pick.add_argument("--devflow", required=True, help="path to a devflow checkout (contract tools)")
     pick.add_argument("--session-file", default=".chat-worker-session.json")
     pick.add_argument("--intent", default=None, help="the user's broad instruction (audit only)")
+    pick.add_argument("--work-class", dest="accepted_work_classes", action="append", default=None, help="accepted Stage-1 work class; repeat to accept multiple classes")
     pick.add_argument("--repository-checkout", action="store_true", help="a target working tree is present")
     pick.add_argument("--execute", action="store_true", help="claim + acknowledge a work disposition")
     rel = sub.add_parser("release", help="release a claim obtained by pickup --execute")
@@ -532,6 +537,7 @@ def main(argv: list[str] | None = None) -> int:
         target_repository=args.target,
         observation=observation,
         work_intent=args.intent,
+        accepted_work_classes=tuple(args.accepted_work_classes) if args.accepted_work_classes is not None else None,
         devflow_tools=tools,
         issue_reader=reader,
         state_reader=state,
