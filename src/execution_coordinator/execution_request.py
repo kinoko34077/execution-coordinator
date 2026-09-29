@@ -12,6 +12,11 @@ from .ranking import candidate_fingerprint
 
 
 EXECUTION_REQUEST_SCHEMA_VERSION = "execution-request.v1"
+AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION = "execution-request.autolaunch.v1"
+_EXECUTION_REQUEST_SCHEMA_VERSIONS = frozenset({
+    EXECUTION_REQUEST_SCHEMA_VERSION,
+    AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION,
+})
 BOOTSTRAP_CONTEXT_SCHEMA_VERSION = "execution-bootstrap-context.v1"
 
 _FINGERPRINT = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -71,8 +76,8 @@ class ClaimAuthority:
             raise ValueError("claim authority role/state is unsupported") from exc
         object.__setattr__(self, "role", role)
         object.__setattr__(self, "state", state)
-        if state is not ExecutionState.RUNNING:
-            raise ValueError("execution request requires RUNNING authority after acknowledge")
+        if state not in (ExecutionState.CLAIMED, ExecutionState.RUNNING):
+            raise ValueError("claim authority state must be CLAIMED or RUNNING")
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,7 +91,7 @@ class ExecutionEvidence:
     fresh_until: datetime
 
     def __post_init__(self) -> None:
-        if self.schema_version != EXECUTION_REQUEST_SCHEMA_VERSION:
+        if self.schema_version not in _EXECUTION_REQUEST_SCHEMA_VERSIONS:
             raise ValueError("execution evidence schema_version is unsupported")
         _require_nonempty(self.source_ref, "source_ref")
         if not isinstance(self.candidate_fingerprint, str) or _FINGERPRINT.fullmatch(
@@ -158,7 +163,7 @@ class ExecutionRequest:
     bootstrap: BootstrapContext
 
     def __post_init__(self) -> None:
-        if self.schema_version != EXECUTION_REQUEST_SCHEMA_VERSION:
+        if self.schema_version not in _EXECUTION_REQUEST_SCHEMA_VERSIONS:
             raise ValueError("execution request schema_version is unsupported")
         _require_nonempty(self.request_id, "request_id")
         if not isinstance(self.authority, ClaimAuthority):
@@ -168,6 +173,18 @@ class ExecutionRequest:
             raise TypeError("evidence must be ExecutionEvidence")
         if not isinstance(self.bootstrap, BootstrapContext):
             raise TypeError("bootstrap must be a BootstrapContext")
+        if self.evidence.schema_version != self.schema_version:
+            raise ValueError("execution evidence schema_version must match request schema_version")
+        if (
+            self.schema_version == EXECUTION_REQUEST_SCHEMA_VERSION
+            and self.authority.state is not ExecutionState.RUNNING
+        ):
+            raise ValueError("execution-request.v1 requires RUNNING authority after acknowledge")
+        if (
+            self.schema_version == AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION
+            and self.authority.state is not ExecutionState.CLAIMED
+        ):
+            raise ValueError("auto-launch execution request requires CLAIMED authority before provider launch")
         object.__setattr__(
             self,
             "required_capabilities",
@@ -183,16 +200,15 @@ class ExecutionRequest:
         return self.evidence.is_fresh(now)
 
 
-def build_execution_request(
+def _build_execution_request(
     match: CapabilityMatch,
     authority: ClaimAuthority,
     bootstrap: BootstrapContext,
     *,
+    schema_version: str,
     request_id: str,
     now: datetime,
 ) -> ExecutionRequest:
-    """Bind one Phase 3 match to already acknowledged runtime authority."""
-
     if not isinstance(match, CapabilityMatch):
         raise TypeError("match must be a CapabilityMatch")
     if not isinstance(authority, ClaimAuthority):
@@ -219,12 +235,12 @@ def build_execution_request(
         raise ValueError("candidate evidence is stale or from the future")
 
     return ExecutionRequest(
-        schema_version=EXECUTION_REQUEST_SCHEMA_VERSION,
+        schema_version=schema_version,
         request_id=request_id,
         authority=authority,
         entry_ref=candidate.entry_ref,
         evidence=ExecutionEvidence(
-            schema_version=EXECUTION_REQUEST_SCHEMA_VERSION,
+            schema_version=schema_version,
             source_ref=requirements.source_ref,
             candidate_fingerprint=requirements.candidate_fingerprint,
             observed_at=requirements.observed_at,
@@ -236,15 +252,57 @@ def build_execution_request(
     )
 
 
+def build_execution_request(
+    match: CapabilityMatch,
+    authority: ClaimAuthority,
+    bootstrap: BootstrapContext,
+    *,
+    request_id: str,
+    now: datetime,
+) -> ExecutionRequest:
+    """Bind one Phase 3 match to already acknowledged runtime authority."""
+
+    return _build_execution_request(
+        match,
+        authority,
+        bootstrap,
+        schema_version=EXECUTION_REQUEST_SCHEMA_VERSION,
+        request_id=request_id,
+        now=now,
+    )
+
+
+def build_auto_launch_execution_request(
+    match: CapabilityMatch,
+    authority: ClaimAuthority,
+    bootstrap: BootstrapContext,
+    *,
+    request_id: str,
+    now: datetime,
+) -> ExecutionRequest:
+    """Bind one Phase 3 match to current CLAIMED authority before provider launch."""
+
+    return _build_execution_request(
+        match,
+        authority,
+        bootstrap,
+        schema_version=AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION,
+        request_id=request_id,
+        now=now,
+    )
+
+
 class LaunchStatus(StrEnum):
     ACCEPTED = "LAUNCH_ACCEPTED"
     UNAVAILABLE = "LAUNCH_UNAVAILABLE"
     FAILED = "LAUNCH_FAILED"
+    AMBIGUOUS = "LAUNCH_AMBIGUOUS"
 
 
 class ReconciliationReason(StrEnum):
     CLAIM_PRESENT_LAUNCH_NOT_STARTED = "CLAIM_PRESENT_LAUNCH_NOT_STARTED"
     WORKER_DIED_BEFORE_ACKNOWLEDGE = "WORKER_DIED_BEFORE_ACKNOWLEDGE"
+    LAUNCH_RESULT_AMBIGUOUS = "LAUNCH_RESULT_AMBIGUOUS"
 
 
 @dataclass(frozen=True, slots=True)
@@ -260,7 +318,7 @@ class DispatchOutcome:
     reconciliation_reason: ReconciliationReason | None = None
 
     def __post_init__(self) -> None:
-        if self.schema_version != EXECUTION_REQUEST_SCHEMA_VERSION:
+        if self.schema_version not in _EXECUTION_REQUEST_SCHEMA_VERSIONS:
             raise ValueError("dispatch outcome schema_version is unsupported")
         _require_nonempty(self.request_id, "request_id")
         try:
@@ -289,9 +347,16 @@ class DispatchOutcome:
             raise ValueError("non-accepted launch requires reconciliation evidence")
 
     @classmethod
-    def accepted(cls, *, request_id: str, worker_id: str, session_id: str) -> "DispatchOutcome":
+    def accepted(
+        cls,
+        *,
+        request_id: str,
+        worker_id: str,
+        session_id: str,
+        schema_version: str = EXECUTION_REQUEST_SCHEMA_VERSION,
+    ) -> "DispatchOutcome":
         return cls(
-            schema_version=EXECUTION_REQUEST_SCHEMA_VERSION,
+            schema_version=schema_version,
             request_id=request_id,
             launch_status=LaunchStatus.ACCEPTED,
             worker_id=worker_id,
@@ -304,9 +369,10 @@ class DispatchOutcome:
         *,
         request_id: str,
         reason: str,
+        schema_version: str = EXECUTION_REQUEST_SCHEMA_VERSION,
     ) -> "DispatchOutcome":
         return cls(
-            schema_version=EXECUTION_REQUEST_SCHEMA_VERSION,
+            schema_version=schema_version,
             request_id=request_id,
             launch_status=LaunchStatus.UNAVAILABLE,
             reason=reason,
@@ -320,13 +386,30 @@ class DispatchOutcome:
         request_id: str,
         reason: str,
         reconciliation_reason: ReconciliationReason = ReconciliationReason.CLAIM_PRESENT_LAUNCH_NOT_STARTED,
+        schema_version: str = EXECUTION_REQUEST_SCHEMA_VERSION,
     ) -> "DispatchOutcome":
         return cls(
-            schema_version=EXECUTION_REQUEST_SCHEMA_VERSION,
+            schema_version=schema_version,
             request_id=request_id,
             launch_status=LaunchStatus.FAILED,
             reason=reason,
             reconciliation_reason=reconciliation_reason,
+        )
+
+    @classmethod
+    def ambiguous(
+        cls,
+        *,
+        request_id: str,
+        reason: str,
+        schema_version: str = AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION,
+    ) -> "DispatchOutcome":
+        return cls(
+            schema_version=schema_version,
+            request_id=request_id,
+            launch_status=LaunchStatus.AMBIGUOUS,
+            reason=reason,
+            reconciliation_reason=ReconciliationReason.LAUNCH_RESULT_AMBIGUOUS,
         )
 
     @property
@@ -385,23 +468,28 @@ def dispatch_execution_request(
         return DispatchOutcome.unavailable(
             request_id=request.request_id,
             reason=_error_reason(exc),
+            schema_version=request.schema_version,
         )
     except WorkerDiedBeforeAcknowledgeError as exc:
         return DispatchOutcome.failed(
             request_id=request.request_id,
             reason=_error_reason(exc),
             reconciliation_reason=ReconciliationReason.WORKER_DIED_BEFORE_ACKNOWLEDGE,
+            schema_version=request.schema_version,
         )
     except LaunchFailedError as exc:
         return DispatchOutcome.failed(
             request_id=request.request_id,
             reason=_error_reason(exc),
+            schema_version=request.schema_version,
         )
 
     if not isinstance(outcome, DispatchOutcome):
         raise DispatchProtocolError("adapter returned an unsupported dispatch outcome")
     if outcome.request_id != request.request_id:
         raise DispatchProtocolError("adapter outcome request_id does not match request")
+    if outcome.schema_version != request.schema_version:
+        raise DispatchProtocolError("adapter outcome schema_version does not match request")
     if (
         outcome.launch_status is LaunchStatus.ACCEPTED
         and outcome.worker_id != request.authority.worker_id
