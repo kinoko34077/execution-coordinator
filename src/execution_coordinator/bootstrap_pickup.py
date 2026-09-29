@@ -41,6 +41,7 @@ from .discovery import (
 )
 from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
+from .portfolio_metadata import WORK_CLASSES
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
 from .portfolio_runtime import read_portfolio_runtime
 from .ranking import candidate_fingerprint, portable_rank_class_key
@@ -359,6 +360,10 @@ def run_pickup(
     in devflow.  Without ``gateway_factory`` the cycle is read-only.
     """
 
+    devflow_work_classes = getattr(devflow_tools.chat_worker_bootstrap, "WORK_CLASSES", None)
+    if devflow_work_classes is not None and frozenset(devflow_work_classes) != WORK_CLASSES:
+        raise RuntimeError("work-class contract mismatch between execution-coordinator and devflow")
+
     request = devflow_tools.chat_worker_profile.build_request(
         observation, target_repository=target_repository, work_intent=work_intent, now=now
     )
@@ -533,21 +538,25 @@ def main(argv: list[str] | None = None) -> int:
         "probes": probes,
     }
     reader = GitHubIssueReader(token=token)
-    outcome = run_pickup(
-        target_repository=args.target,
-        observation=observation,
-        work_intent=args.intent,
-        accepted_work_classes=tuple(args.accepted_work_classes) if args.accepted_work_classes is not None else None,
-        devflow_tools=tools,
-        issue_reader=reader,
-        state_reader=state,
-        control_documents=list_control_documents(token, reader) if agents else (),
-        agents_md_read=agents,
-        now=now,
-        gateway_factory=(lambda: ActionsMutationGateway(token=token, repository=ec, state_reader=state.load_body))
-        if args.execute
-        else None,
-    )
+    try:
+        outcome = run_pickup(
+            target_repository=args.target,
+            observation=observation,
+            work_intent=args.intent,
+            accepted_work_classes=tuple(args.accepted_work_classes) if args.accepted_work_classes is not None else None,
+            devflow_tools=tools,
+            issue_reader=reader,
+            state_reader=state,
+            control_documents=list_control_documents(token, reader) if agents else (),
+            agents_md_read=agents,
+            now=now,
+            gateway_factory=(lambda: ActionsMutationGateway(token=token, repository=ec, state_reader=state.load_body))
+            if args.execute
+            else None,
+        )
+    except tools.chat_worker_bootstrap.ContractError as exc:
+        detail = getattr(exc, "detail", str(exc))
+        parser.error(f"pickup request rejected: {detail}")
     live = outcome.get("session")
     print(
         json.dumps(
