@@ -2,16 +2,19 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
 from execution_coordinator.actions_controller import (
     accept_and_claim,
+    expire_stale_claims,
     finalize_work,
     prepare_offer,
     reconcile_bootstrap,
 )
-from execution_coordinator.model import ExecutionState
+from execution_coordinator.agent import AgentSession
+from execution_coordinator.model import ExecutionState, Role
 from execution_coordinator.snapshot import parse_issue_body
 from tests.test_agent import _Gateway
 from tests.test_bootstrap_pickup import NOW, _Reader, _Store, _doc, _portfolio_control
@@ -32,6 +35,25 @@ class ActionsControllerTests(unittest.TestCase):
         }
         value.update(overrides)
         return value
+
+    def test_expire_stale_claims_sweeps_expired_runtime_before_discovery(self) -> None:
+        gateway = _Gateway(now=NOW - timedelta(minutes=16))
+        stale = AgentSession(
+            gateway,
+            task="owner/a#8",
+            role=Role.IMPLEMENTER,
+            worker_id="stale-worker",
+        )
+        stale.claim(idempotency_key="stale-claim")
+        self.assertTrue(parse_issue_body(gateway.store.body).claims)
+
+        gateway.now = NOW
+        result = expire_stale_claims(gateway, attempt_id="controller-run-1")
+
+        self.assertEqual("EXPIRED", result["state"])
+        self.assertEqual(1, result["expired_count"])
+        self.assertEqual(["claim", "expire"], [call[0] for call in gateway.calls])
+        self.assertEqual({}, parse_issue_body(gateway.store.body).claims)
 
     def test_prepare_offer_is_read_only_and_derives_exact_target(self) -> None:
         control, task, reader = self._fixture()
