@@ -63,6 +63,14 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("concurrency:", text)
         self.assertIn("cancel-in-progress: false", text)
 
+    def test_auto_launch_expires_stale_runtime_before_read_only_offer(self) -> None:
+        text = self._auto_launch_text()
+        expire = text.index("name: Expire stale runtime claims")
+        offer = text.index("name: Prepare controller offer")
+        self.assertLess(expire, offer)
+        self.assertIn("expire-stale", text[expire:offer])
+        self.assertIn("--attempt-id", text[expire:offer])
+
     def test_auto_launch_workflow_has_minimum_central_permissions_and_pinned_actions(self) -> None:
         text = self._auto_launch_text()
         self.assertIn("contents: read", text)
