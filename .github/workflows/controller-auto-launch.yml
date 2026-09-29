@@ -34,6 +34,13 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Expire stale runtime claims
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m execution_coordinator.runtime_maintenance expire-stale \
+            --attempt-id "controller-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
       - name: Prepare controller offer
         id: offer
         env:
@@ -232,13 +239,14 @@ jobs:
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
           CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'
         with:
           prompt_file: ${{ github.workspace }}/.controller-auto-launch/bootstrap-prompt.txt
           anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           claude_args: >-
-            --bare
+            --safe-mode
             --strict-mcp-config
             --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
             --tools ""
@@ -300,17 +308,18 @@ jobs:
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
           CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'
         with:
           prompt_file: ${{ github.workspace }}/.controller-auto-launch/work-prompt.txt
           anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           claude_args: >-
-            --bare
+            --safe-mode
             --strict-mcp-config
             --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
             --resume "${{ steps.claim.outputs.session_id }}"
-            --tools "Read,Glob,Grep,Edit,Write"
+            --tools "Read,Edit,Write"
             --permission-mode acceptEdits
             --max-turns 8
 
