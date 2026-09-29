@@ -28,8 +28,11 @@ _CONTROL = re.compile(r"^kinoko34077/devflow#[1-9][0-9]*$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TAG = re.compile(r"^[a-z0-9][a-z0-9_.:/-]{0,63}$")
 
+WORK_CLASSES = frozenset(
+    {"audit", "triage", "sync-check", "quickfix", "implementation", "formal-review"}
+)
 _OUTER_FIELDS = frozenset({"schema_version", "source_ref", "repository", "entries"})
-_ENTRY_FIELDS = frozenset(
+_ENTRY_REQUIRED_FIELDS = frozenset(
     {
         "task",
         "role",
@@ -46,6 +49,7 @@ _ENTRY_FIELDS = frozenset(
         "fresh_until",
     }
 )
+_ENTRY_FIELDS = _ENTRY_REQUIRED_FIELDS | {"work_class"}
 
 
 class PortfolioMetadataError(ValueError):
@@ -57,6 +61,7 @@ class PortfolioCandidateMetadata:
     ranking: RankingMetadata
     requirements: CandidateRequirements
     task_body_sha256: str
+    work_class: str | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -214,7 +219,10 @@ def parse_portfolio_metadata(
         raise PortfolioMetadataError("portfolio metadata entries must be an array")
     by_key: dict[tuple[str, Role], PortfolioCandidateMetadata] = {}
     for entry in entries:
-        if not isinstance(entry, dict) or set(entry) != _ENTRY_FIELDS:
+        if not isinstance(entry, dict):
+            raise PortfolioMetadataError("portfolio metadata entry has unknown or missing fields")
+        entry_fields = set(entry)
+        if not _ENTRY_REQUIRED_FIELDS.issubset(entry_fields) or not entry_fields.issubset(_ENTRY_FIELDS):
             raise PortfolioMetadataError("portfolio metadata entry has unknown or missing fields")
         task = entry["task"]
         if not isinstance(task, str) or _TASK.fullmatch(task) is None:
@@ -237,6 +245,12 @@ def parse_portfolio_metadata(
         fingerprint = entry["candidate_fingerprint"]
         if fingerprint != candidate_fingerprint(candidate):
             raise PortfolioMetadataError("portfolio metadata candidate fingerprint does not match current candidate")
+
+        work_class = entry.get("work_class")
+        if work_class is not None and (
+            not isinstance(work_class, str) or work_class not in WORK_CLASSES
+        ):
+            raise PortfolioMetadataError("work_class is unsupported")
 
         urgency = entry["controller_urgency"]
         if urgency is not None and (type(urgency) is not int or not 0 <= urgency <= 100):
@@ -300,6 +314,7 @@ def parse_portfolio_metadata(
             ranking=ranking,
             requirements=requirements,
             task_body_sha256=digest,
+            work_class=work_class,
         )
 
     missing = set(relevant) - set(by_key)
