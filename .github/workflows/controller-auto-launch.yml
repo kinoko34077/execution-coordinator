@@ -1,0 +1,397 @@
+name: controller auto-launch
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: read
+  actions: write
+  id-token: write
+
+concurrency:
+  group: controller-auto-launch-${{ github.event_name }}
+  cancel-in-progress: false
+
+jobs:
+  controller:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      PYTHONPATH: src
+      CONTEXT_DIR: .controller-auto-launch
+      TARGET_DIR: target
+    steps:
+      - name: Checkout execution coordinator
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.11'
+
+      - name: Expire stale runtime claims
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          python -m execution_coordinator.runtime_maintenance expire-stale \
+            --attempt-id "controller-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+      - name: Prepare controller offer
+        id: offer
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
+        run: python -m execution_coordinator.actions_controller --context-dir "$CONTEXT_DIR" prepare-offer
+
+      - name: Derive target token scope
+        id: target
+        if: steps.offer.outputs.has_offer == 'true'
+        env:
+          TARGET_REPOSITORY: ${{ steps.offer.outputs.target_repository }}
+        run: |
+          python - <<'PY'
+          import os
+          repository = os.environ["TARGET_REPOSITORY"]
+          parts = repository.split("/", 1)
+          if len(parts) != 2 or not all(parts):
+              raise SystemExit("invalid target repository")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"owner={parts[0]}\n")
+              output.write(f"repository_name={parts[1]}\n")
+          PY
+
+      - name: Check human-gated provider configuration
+        id: config
+        if: steps.offer.outputs.has_offer == 'true'
+        env:
+          APP_CLIENT_ID: ${{ vars.AUTONOMOUS_GITHUB_APP_CLIENT_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.AUTONOMOUS_GITHUB_APP_PRIVATE_KEY }}
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          app_ready = bool(os.environ.get("APP_CLIENT_ID") and os.environ.get("APP_PRIVATE_KEY"))
+          wif_ready = all(
+              os.environ.get(name)
+              for name in (
+                  "ANTHROPIC_FEDERATION_RULE_ID",
+                  "ANTHROPIC_ORGANIZATION_ID",
+                  "ANTHROPIC_SERVICE_ACCOUNT_ID",
+              )
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"app_ready={'true' if app_ready else 'false'}\n")
+              output.write(f"wif_ready={'true' if wif_ready else 'false'}\n")
+              output.write(f"config_ready={'true' if app_ready and wif_ready else 'false'}\n")
+          if not (app_ready and wif_ready):
+              with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
+                  summary.write("REQUIRES_USER_AUTHORITY: approved GitHub App and/or Anthropic OIDC configuration is absent. No claim will be attempted.\n")
+          PY
+
+      - name: Mint target GitHub App token
+        id: app-token
+        if: steps.offer.outputs.has_offer == 'true' && steps.config.outputs.config_ready == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
+        with:
+          client-id: ${{ vars.AUTONOMOUS_GITHUB_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTONOMOUS_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.repository_name }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+
+      - name: Checkout selected target
+        id: target-checkout
+        if: steps.offer.outputs.has_offer == 'true' && steps.app-token.outcome == 'success'
+        continue-on-error: true
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          repository: ${{ steps.offer.outputs.target_repository }}
+          token: ${{ steps.app-token.outputs.token }}
+          path: target
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Probe exact launcher environment
+        id: preflight
+        if: steps.offer.outputs.has_offer == 'true'
+        env:
+          APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
+          APP_TOKEN_VALUE: ${{ steps.app-token.outputs.token }}
+          TARGET_CHECKOUT_OUTCOME: ${{ steps.target-checkout.outcome }}
+          WIF_READY: ${{ steps.config.outputs.wif_ready }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import platform
+          import subprocess
+          from pathlib import Path
+
+          target = Path(os.environ["TARGET_DIR"])
+          app_ready = os.environ.get("APP_TOKEN_OUTCOME") == "success" and bool(os.environ.get("APP_TOKEN_VALUE"))
+          checkout_ready = os.environ.get("TARGET_CHECKOUT_OUTCOME") == "success" and (target / ".git").exists()
+          wif_ready = os.environ.get("WIF_READY") == "true"
+
+          # Capability evidence describes what the Claude worker can actually
+          # exercise through its allowed tools, not arbitrary commands present
+          # on the orchestration runner. v1 gives Claude file tools only.
+          capabilities = []
+          if checkout_ready:
+              capabilities.append("repo-checkout")
+
+          environment = []
+          system = platform.system()
+          if system == "Linux":
+              environment.append("linux")
+          elif system == "Darwin":
+              environment.append("macos")
+          elif system == "Windows":
+              environment.append("windows")
+
+          base_sha = "0" * 40
+          base_ref = "main"
+          if checkout_ready:
+              base_sha = subprocess.check_output(
+                  ["git", "-C", str(target), "rev-parse", "HEAD"], text=True
+              ).strip()
+              base_ref = subprocess.check_output(
+                  ["git", "-C", str(target), "branch", "--show-current"], text=True
+              ).strip() or "main"
+
+          payload = {
+              "github_app_ready": app_ready,
+              "wif_ready": wif_ready,
+              "repository_checkout": checkout_ready,
+              "capabilities": capabilities,
+              "environment": environment,
+          }
+          context = Path(os.environ["CONTEXT_DIR"])
+          context.mkdir(parents=True, exist_ok=True)
+          (context / "preflight.json").write_text(
+              json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"base_sha={base_sha}\n")
+              output.write(f"base_ref={base_ref}\n")
+          PY
+
+      - name: Accept and claim
+        id: claim
+        if: steps.offer.outputs.has_offer == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
+        run: |
+          python -m execution_coordinator.actions_controller --context-dir "$CONTEXT_DIR" accept-and-claim \
+            --preflight "$CONTEXT_DIR/preflight.json" \
+            --base-sha "${{ steps.preflight.outputs.base_sha }}" \
+            --attempt-id "controller-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+      - name: Prepare claimed target branch and isolated Claude config
+        if: steps.claim.outputs.result == 'ACCEPTED'
+        env:
+          BRANCH: ${{ steps.claim.outputs.branch }}
+          BASE_SHA: ${{ steps.preflight.outputs.base_sha }}
+        run: |
+          git -C "$TARGET_DIR" switch -c "$BRANCH" "$BASE_SHA"
+          printf '{"mcpServers":{}}\n' > "$CONTEXT_DIR/empty-mcp.json"
+
+      - name: Bootstrap Claude execution context
+        id: claude-bootstrap
+        if: steps.claim.outputs.result == 'ACCEPTED'
+        continue-on-error: true
+        uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'
+        with:
+          prompt_file: ${{ github.workspace }}/.controller-auto-launch/bootstrap-prompt.txt
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          claude_args: >-
+            --safe-mode
+            --strict-mcp-config
+            --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
+            --tools ""
+            --max-turns 1
+            --session-id "${{ steps.claim.outputs.session_id }}"
+
+      - name: Normalize Claude bootstrap evidence
+        id: bootstrap-result
+        if: steps.claim.outputs.result == 'ACCEPTED'
+        env:
+          BOOTSTRAP_OUTCOME: ${{ steps.claude-bootstrap.outcome }}
+          BOOTSTRAP_CONCLUSION: ${{ steps.claude-bootstrap.outputs.conclusion }}
+          OBSERVED_SESSION_ID: ${{ steps.claude-bootstrap.outputs.session_id }}
+          EXPECTED_SESSION_ID: ${{ steps.claim.outputs.session_id }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          outcome = os.environ.get("BOOTSTRAP_OUTCOME", "")
+          conclusion = os.environ.get("BOOTSTRAP_CONCLUSION", "")
+          observed = os.environ.get("OBSERVED_SESSION_ID", "")
+          expected = os.environ["EXPECTED_SESSION_ID"]
+          if outcome == "success" and conclusion == "success" and observed == expected:
+              result = {"status": "success", "session_id": observed}
+          elif outcome == "failure" and observed == expected:
+              result = {
+                  "status": "failed",
+                  "session_id": observed,
+                  "terminal": True,
+                  "reason": "Claude bootstrap action terminated with failure",
+              }
+          else:
+              result = {
+                  "status": "ambiguous",
+                  "session_id": observed or None,
+                  "reason": "Claude bootstrap session evidence is missing or mismatched",
+              }
+          path = Path(os.environ["CONTEXT_DIR"]) / "bootstrap-result.json"
+          path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
+      - name: Reconcile bootstrap before work
+        id: reconcile
+        if: steps.claim.outputs.result == 'ACCEPTED'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
+        run: |
+          python -m execution_coordinator.actions_controller --context-dir "$CONTEXT_DIR" reconcile-bootstrap \
+            --bootstrap-result "$CONTEXT_DIR/bootstrap-result.json" \
+            --evidence-ref "actions:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:bootstrap"
+
+      - name: Run bounded Claude repository work
+        id: claude-work
+        if: steps.reconcile.outputs.state == 'RUNNING'
+        continue-on-error: true
+        uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'
+        with:
+          prompt_file: ${{ github.workspace }}/.controller-auto-launch/work-prompt.txt
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          claude_args: >-
+            --safe-mode
+            --strict-mcp-config
+            --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
+            --resume "${{ steps.claim.outputs.session_id }}"
+            --tools "Read,Edit,Write"
+            --permission-mode acceptEdits
+            --max-turns 8
+
+      - name: Deterministic target integration
+        id: integrate
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claude-work.outcome == 'success'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_REPOSITORY: ${{ steps.offer.outputs.target_repository }}
+          TARGET_ISSUE: ${{ steps.offer.outputs.target_issue }}
+          BRANCH: ${{ steps.claim.outputs.branch }}
+          BASE_REF: ${{ steps.preflight.outputs.base_ref }}
+          TARGET_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          cd "$TARGET_DIR"
+          HAS_DIFF=false
+          PR_URL=""
+          if [ -n "$(git status --porcelain)" ]; then
+            HAS_DIFF=true
+            git config user.name "KiNoTch. autonomous worker"
+            git config user.email "79015263+kinoko34077@users.noreply.github.com"
+            git add -A
+            git commit -m "chore: bounded autonomous implementation for #${TARGET_ISSUE}"
+            AUTH_HEADER="AUTHORIZATION: basic $(printf 'x-access-token:%s' "$TARGET_TOKEN" | base64 -w0)"
+            echo "::add-mask::$AUTH_HEADER"
+            git config --local http.https://github.com/.extraheader "$AUTH_HEADER"
+            git push origin "HEAD:refs/heads/$BRANCH"
+            git config --local --unset-all http.https://github.com/.extraheader || true
+            PR_BODY="Bounded controller auto-launch implementation for #${TARGET_ISSUE}. Draft only; normal review and acceptance remain required."
+            PR_URL=$(gh pr list --repo "$TARGET_REPOSITORY" --head "$BRANCH" --state open --json url --jq '.[0].url // empty')
+            if [ -z "$PR_URL" ]; then
+              PR_URL=$(gh pr create --draft --repo "$TARGET_REPOSITORY" --base "$BASE_REF" --head "$BRANCH" \
+                --title "auto: bounded implementation for #${TARGET_ISSUE}" --body "$PR_BODY")
+            else
+              gh pr edit "$PR_URL" --body "$PR_BODY"
+            fi
+            CHECKPOINT="Controller auto-launch v1 produced draft PR ${PR_URL}. Runtime completion is not implied; normal verification/review remains required."
+          else
+            CHECKPOINT="Controller auto-launch v1 completed one bounded worker pass with no repository diff. Runtime claim will be released; this Issue remains incomplete unless its own acceptance criteria say otherwise."
+          fi
+          gh issue comment "$TARGET_ISSUE" --repo "$TARGET_REPOSITORY" --body "$CHECKPOINT"
+          {
+            echo "has_diff=$HAS_DIFF"
+            echo "pr_url=$PR_URL"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build bounded work result
+        id: work-result
+        if: always() && steps.reconcile.outputs.state == 'RUNNING'
+        env:
+          CLAUDE_OUTCOME: ${{ steps.claude-work.outcome }}
+          INTEGRATION_OUTCOME: ${{ steps.integrate.outcome }}
+          HAS_DIFF: ${{ steps.integrate.outputs.has_diff }}
+          PR_URL: ${{ steps.integrate.outputs.pr_url }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          claude = os.environ.get("CLAUDE_OUTCOME", "")
+          integration = os.environ.get("INTEGRATION_OUTCOME", "")
+          if claude != "success":
+              result = {"status": "failed", "reason": f"Claude work action outcome={claude or 'unknown'}"}
+          elif integration != "success":
+              result = {"status": "failed", "reason": f"deterministic integration outcome={integration or 'unknown'}"}
+          else:
+              result = {
+                  "status": "success",
+                  "has_diff": os.environ.get("HAS_DIFF") == "true",
+                  "pr_url": os.environ.get("PR_URL") or None,
+              }
+          path = Path(os.environ["CONTEXT_DIR"]) / "work-result.json"
+          path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"status={result['status']}\n")
+          PY
+
+      - name: Record failed work checkpoint
+        if: always() && steps.reconcile.outputs.state == 'RUNNING' && steps.work-result.outputs.status == 'failed'
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          TARGET_REPOSITORY: ${{ steps.offer.outputs.target_repository }}
+          TARGET_ISSUE: ${{ steps.offer.outputs.target_issue }}
+        run: |
+          gh issue comment "$TARGET_ISSUE" --repo "$TARGET_REPOSITORY" \
+            --body "Controller auto-launch v1 encountered a bounded provider/integration failure. The runtime claim will be failed; inspect the linked Actions run before retrying."
+
+      - name: Finalize runtime claim
+        id: finalize
+        if: always() && steps.reconcile.outputs.state == 'RUNNING'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
+        run: |
+          python -m execution_coordinator.actions_controller --context-dir "$CONTEXT_DIR" finalize-work \
+            --work-result "$CONTEXT_DIR/work-result.json" \
+            --evidence-ref "actions:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:work"

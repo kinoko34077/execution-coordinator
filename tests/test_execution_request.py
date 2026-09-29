@@ -10,6 +10,7 @@ from execution_coordinator.capability import (
     CapabilityMatch,
 )
 from execution_coordinator.execution_request import (
+    AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION,
     BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
     EXECUTION_REQUEST_SCHEMA_VERSION,
     BootstrapContext,
@@ -20,6 +21,7 @@ from execution_coordinator.execution_request import (
     LaunchUnavailableError,
     ReconciliationReason,
     WorkerDiedBeforeAcknowledgeError,
+    build_auto_launch_execution_request,
     build_execution_request,
     dispatch_execution_request,
 )
@@ -114,6 +116,65 @@ class ExecutionRequestTests(unittest.TestCase):
         self.assertEqual("kinoko34077/devflow#107", request.evidence.source_ref)
         self.assertEqual(frozenset({"python"}), request.required_capabilities)
         self.assertEqual("worktree://execution-coordinator/phase5", request.bootstrap.context_ref)
+
+    def test_auto_launch_request_requires_claimed_authority_and_preserves_binding(self) -> None:
+        request = build_auto_launch_execution_request(
+            _match(),
+            _authority(state=ExecutionState.CLAIMED),
+            _bootstrap(),
+            request_id="req_autolaunch_1",
+            now=NOW,
+        )
+
+        self.assertEqual(AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION, request.schema_version)
+        self.assertEqual(AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION, request.evidence.schema_version)
+        self.assertEqual(ExecutionState.CLAIMED, request.authority.state)
+        self.assertEqual("owner/repo#1", request.authority.task)
+        self.assertEqual("kinoko34077/devflow#107", request.evidence.source_ref)
+        self.assertEqual(candidate_fingerprint(_match().candidate), request.evidence.candidate_fingerprint)
+        self.assertEqual(frozenset({"python"}), request.required_capabilities)
+        self.assertEqual(frozenset({"linux"}), request.required_environment)
+
+        stale_adapter = _Adapter()
+        with self.assertRaisesRegex(DispatchProtocolError, "stale"):
+            dispatch_execution_request(
+                stale_adapter,
+                request,
+                now=NOW + timedelta(hours=1),
+            )
+        self.assertFalse(stale_adapter.called)
+
+        with self.assertRaisesRegex(ValueError, "CLAIMED"):
+            build_auto_launch_execution_request(
+                _match(),
+                _authority(state=ExecutionState.RUNNING),
+                _bootstrap(),
+                request_id="req_autolaunch_running",
+                now=NOW,
+            )
+
+        with self.assertRaisesRegex(ValueError, "stale"):
+            build_auto_launch_execution_request(
+                _match(),
+                _authority(state=ExecutionState.CLAIMED),
+                _bootstrap(),
+                request_id="req_autolaunch_stale",
+                now=NOW + timedelta(hours=1),
+            )
+
+    def test_ambiguous_launch_is_explicit_reconciliation_outcome(self) -> None:
+        outcome = DispatchOutcome.ambiguous(
+            request_id="req_autolaunch_1",
+            reason="provider start result is unknown",
+        )
+
+        self.assertEqual(LaunchStatus.AMBIGUOUS, outcome.launch_status)
+        self.assertEqual("LAUNCH_AMBIGUOUS", outcome.launch_status.value)
+        self.assertTrue(outcome.reconciliation_required)
+        self.assertIsNotNone(outcome.reconciliation_reason)
+        self.assertIsNone(outcome.worker_id)
+        self.assertIsNone(outcome.session_id)
+        self.assertEqual("provider start result is unknown", outcome.reason)
 
     def test_request_requires_acknowledged_authority_and_fresh_matching_identity(self) -> None:
         with self.assertRaisesRegex(ValueError, "RUNNING"):
