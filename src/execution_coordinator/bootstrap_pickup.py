@@ -42,8 +42,8 @@ from .discovery import (
 from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
-from .portfolio_metadata import PortfolioMetadataError, parse_portfolio_metadata
-from .ranking import candidate_fingerprint, portable_rank_class_key, rank_managed_frontier
+from .portfolio_runtime import read_portfolio_runtime
+from .ranking import candidate_fingerprint, portable_rank_class_key
 
 EVIDENCE_SCHEMA = "chat-worker-bootstrap-evidence.v1"
 EVIDENCE_TTL = timedelta(minutes=10)
@@ -134,20 +134,6 @@ class GatherInputs:
     published: frozenset[tuple[str, Role]] = frozenset()
 
 
-class _ControlSnapshotReader:
-    """Pin bootstrap-supplied Control snapshots while delegating task reads."""
-
-    def __init__(self, controls: tuple[IssueDocument, ...], delegate: IssueReader) -> None:
-        self._controls = {(item.repository, item.number): item for item in controls}
-        self._delegate = delegate
-
-    def read_issue(self, repository: str, issue_number: int) -> IssueDocument:
-        item = self._controls.get((repository, issue_number))
-        if item is not None:
-            return item
-        return self._delegate.read_issue(repository, issue_number)
-
-
 def _frontier_projection_context(
     frontier: ManagedFrontierResult,
     *,
@@ -225,30 +211,14 @@ def gather_evidence(
         }
         return evidence, candidates
 
-    # Portfolio scope: only Controls whose current hard repository gates permit
-    # autonomous work enter discovery.  All Control summaries remain in the
-    # evidence so the devflow classifier can still detect identity ambiguity.
-    selected_documents = tuple(
-        document
-        for summary, document in zip(controls, inputs.control_documents)
-        if summary["state"] == "open"
-        and summary["trusted"] is True
-        and summary["repository_state"] == "ACTIVE"
-        and summary["human_gate"] is False
-        and summary["external_blocker"] is False
-    )
-    sources = tuple(
-        DurableIssueSource(document.repository, document.number)
-        for document in selected_documents
-    )
-    snapshot_reader = _ControlSnapshotReader(inputs.control_documents, issue_reader)
-    frontier = enumerate_managed_frontier(
-        sources,
-        issue_reader=snapshot_reader,
+    runtime = read_portfolio_runtime(
+        inputs.control_documents,
+        issue_reader=issue_reader,
         state_reader=state_reader,
-        now=now,
         worker_id=inputs.worker_id,
+        now=now,
     )
+    frontier = runtime.frontier
     if frontier.read is None:
         return evidence, ()
     evidence["coordinator_state_read"] = True
@@ -257,52 +227,33 @@ def gather_evidence(
     )
     candidates = frontier.candidates
 
-    metadata_by_key: dict[tuple[str, Role], object] = {}
-    metadata_complete = not frontier.read.discovery.failures
-    try:
-        for document in selected_documents:
-            for item in parse_portfolio_metadata(
-                document,
-                candidates=frontier.fresh_candidates,
-                now=now,
-            ):
-                key = (item.ranking.task, item.ranking.role)
-                if key in metadata_by_key:
-                    raise PortfolioMetadataError(
-                        "portfolio metadata duplicates one candidate across Controls"
-                    )
-                metadata_by_key[key] = item
-    except PortfolioMetadataError:
-        metadata_complete = False
-
-    fresh_keys = {(item.task, item.role) for item in frontier.fresh_candidates}
-    if set(metadata_by_key) != fresh_keys:
-        metadata_complete = False
-
     projected: list[dict[str, Any]] = []
-    if metadata_complete:
-        ranked = rank_managed_frontier(
-            frontier,
-            [item.ranking for item in metadata_by_key.values()],
-            now=now,
-        )
-        ranked_keys = {(item.candidate.task, item.candidate.role) for item in ranked.ranked}
+    if runtime.complete and runtime.ranked is not None:
+        ranked_by_key = {
+            (item.candidate.task, item.candidate.role): item
+            for item in runtime.ranked.ranked
+        }
+        requirements_by_key = {
+            (item.task, item.role): item for item in runtime.requirements
+        }
         for candidate in candidates:
             if candidate.role not in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY):
                 continue
-            if candidate.role is not Role.RECOVERY and (candidate.task, candidate.role) not in ranked_keys:
+            key = (candidate.task, candidate.role)
+            if candidate.role is not Role.RECOVERY and key not in ranked_by_key:
                 continue
             item = _candidate_evidence(candidate, claimability, held, inputs.published)
             if candidate.role is not Role.RECOVERY:
-                metadata = metadata_by_key[(candidate.task, candidate.role)]
-                item["dependency_ready"] = metadata.ranking.dependency_ready
-                item["rank_key"] = list(portable_rank_class_key(metadata.ranking))
-                item["required_capabilities"] = sorted(metadata.requirements.required_capabilities)
-                item["required_environment"] = sorted(metadata.requirements.required_environment)
+                ranked_item = ranked_by_key[key]
+                requirements = requirements_by_key[key]
+                item["dependency_ready"] = ranked_item.metadata.dependency_ready
+                item["rank_key"] = list(portable_rank_class_key(ranked_item.metadata))
+                item["required_capabilities"] = sorted(requirements.required_capabilities)
+                item["required_environment"] = sorted(requirements.required_environment)
             projected.append(item)
 
     evidence["frontier"] = {
-        "complete": metadata_complete,
+        "complete": runtime.complete,
         "candidates": projected,
     }
     return evidence, candidates
