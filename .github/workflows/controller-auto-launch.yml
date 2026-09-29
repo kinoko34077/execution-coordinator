@@ -129,16 +129,12 @@ jobs:
           APP_TOKEN_VALUE: ${{ steps.app-token.outputs.token }}
           TARGET_CHECKOUT_OUTCOME: ${{ steps.target-checkout.outcome }}
           WIF_READY: ${{ steps.config.outputs.wif_ready }}
-          CENTRAL_GITHUB_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
         run: |
           python - <<'PY'
           import json
           import os
           import platform
-          import shutil
           import subprocess
-          import urllib.request
           from pathlib import Path
 
           target = Path(os.environ["TARGET_DIR"])
@@ -146,10 +142,10 @@ jobs:
           checkout_ready = os.environ.get("TARGET_CHECKOUT_OUTCOME") == "success" and (target / ".git").exists()
           wif_ready = os.environ.get("WIF_READY") == "true"
 
+          # Capability evidence describes what the Claude worker can actually
+          # exercise through its allowed tools, not arbitrary commands present
+          # on the orchestration runner. v1 gives Claude file tools only.
           capabilities = []
-          for command, tag in (("python3", "python"), ("git", "git"), ("node", "node")):
-              if shutil.which(command):
-                  capabilities.append(tag)
           if checkout_ready:
               capabilities.append("repo-checkout")
 
@@ -161,28 +157,6 @@ jobs:
               environment.append("macos")
           elif system == "Windows":
               environment.append("windows")
-
-          token = os.environ.get("CENTRAL_GITHUB_TOKEN", "")
-          headers = {"Accept": "application/vnd.github+json"}
-          if token:
-              headers["Authorization"] = f"Bearer {token}"
-          try:
-              request = urllib.request.Request("https://api.github.com", headers=headers)
-              with urllib.request.urlopen(request, timeout=10) as response:
-                  response.read(1)
-              environment.append("github-network")
-          except Exception:
-              pass
-          try:
-              request = urllib.request.Request(
-                  f"https://api.github.com/repos/{os.environ['GITHUB_REPOSITORY_NAME']}/actions/runs?per_page=1",
-                  headers=headers,
-              )
-              with urllib.request.urlopen(request, timeout=10) as response:
-                  response.read(1)
-              environment.append("github-actions-lane")
-          except Exception:
-              pass
 
           base_sha = "0" * 40
           base_ref = "main"
@@ -198,8 +172,8 @@ jobs:
               "github_app_ready": app_ready,
               "wif_ready": wif_ready,
               "repository_checkout": checkout_ready,
-              "capabilities": sorted(set(capabilities)),
-              "environment": sorted(set(environment)),
+              "capabilities": capabilities,
+              "environment": environment,
           }
           context = Path(os.environ["CONTEXT_DIR"])
           context.mkdir(parents=True, exist_ok=True)
