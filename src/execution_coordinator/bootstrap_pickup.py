@@ -39,10 +39,11 @@ from .discovery import (
     _sections,
     _strip_code_value,
 )
-from .managed_frontier import enumerate_managed_frontier
+from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
-from .ranking import candidate_fingerprint
+from .portfolio_metadata import PortfolioMetadataError, parse_portfolio_metadata
+from .ranking import candidate_fingerprint, portable_rank_class_key, rank_managed_frontier
 
 EVIDENCE_SCHEMA = "chat-worker-bootstrap-evidence.v1"
 EVIDENCE_TTL = timedelta(minutes=10)
@@ -126,11 +127,44 @@ def _candidate_evidence(
 
 @dataclass(frozen=True, slots=True)
 class GatherInputs:
-    target_repository: str
+    target_repository: str | None
     worker_id: str
     control_documents: tuple[IssueDocument, ...]
     agents_md_read: bool
     published: frozenset[tuple[str, Role]] = frozenset()
+
+
+class _ControlSnapshotReader:
+    """Pin bootstrap-supplied Control snapshots while delegating task reads."""
+
+    def __init__(self, controls: tuple[IssueDocument, ...], delegate: IssueReader) -> None:
+        self._controls = {(item.repository, item.number): item for item in controls}
+        self._delegate = delegate
+
+    def read_issue(self, repository: str, issue_number: int) -> IssueDocument:
+        item = self._controls.get((repository, issue_number))
+        if item is not None:
+            return item
+        return self._delegate.read_issue(repository, issue_number)
+
+
+def _frontier_projection_context(
+    frontier: ManagedFrontierResult,
+    *,
+    worker_id: str,
+) -> tuple[dict[tuple[str, Role], ClaimabilityReason], set[tuple[str, Role]]]:
+    assert getattr(frontier, "read", None) is not None
+    state = frontier.read.state.state
+    held = {
+        (claim.task, claim.role)
+        for claim in state.claims.values()
+        if claim.worker_id == worker_id
+    }
+    claimability = {
+        (projection.candidate.task, projection.candidate.role): projection.reason
+        for projection in frontier.claimability
+    }
+    return claimability, held
 
 
 def gather_evidence(
@@ -140,15 +174,15 @@ def gather_evidence(
     state_reader: StateReader,
     now: datetime,
 ) -> tuple[dict[str, Any], tuple[ClaimCandidate, ...]]:
-    """Build bootstrap evidence for one target repository (GET-only)."""
+    """Build one GET-only bootstrap evidence snapshot.
+
+    Repository scope preserves the accepted v1 path.  Portfolio scope uses all
+    eligible trusted Control snapshots and requires complete accepted companion
+    metadata for every ordinary fresh candidate; any gap fails the portfolio
+    frontier closed rather than falling back to repository-scoped ordering.
+    """
 
     controls = [control_summary(document) for document in inputs.control_documents]
-    matching = [
-        (summary, document)
-        for summary, document in zip(controls, inputs.control_documents)
-        if summary["managed_repository"].casefold() == inputs.target_repository.casefold()
-        and summary["state"] == "open"
-    ]
     evidence: dict[str, Any] = {
         "schema_version": EVIDENCE_SCHEMA,
         "observed_at": _utc(now),
@@ -158,35 +192,118 @@ def gather_evidence(
         "coordinator_state_read": False,
         "frontier": {"complete": False, "candidates": []},
     }
-    if len(matching) != 1:
-        return evidence, ()
-    document = matching[0][1]
-    source = DurableIssueSource(document.repository, document.number)
+
+    if inputs.target_repository is not None:
+        matching = [
+            (summary, document)
+            for summary, document in zip(controls, inputs.control_documents)
+            if summary["managed_repository"].casefold() == inputs.target_repository.casefold()
+            and summary["state"] == "open"
+        ]
+        if len(matching) != 1:
+            return evidence, ()
+        document = matching[0][1]
+        source = DurableIssueSource(document.repository, document.number)
+        frontier = enumerate_managed_frontier(
+            [source], issue_reader=issue_reader, state_reader=state_reader, now=now,
+            worker_id=inputs.worker_id,
+        )
+        if frontier.read is None:
+            return evidence, ()
+        evidence["coordinator_state_read"] = True
+        claimability, held = _frontier_projection_context(
+            frontier, worker_id=inputs.worker_id
+        )
+        candidates = frontier.candidates
+        evidence["frontier"] = {
+            "complete": not frontier.read.discovery.failures,
+            "candidates": [
+                _candidate_evidence(candidate, claimability, held, inputs.published)
+                for candidate in candidates
+                if candidate.role in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY)
+            ],
+        }
+        return evidence, candidates
+
+    # Portfolio scope: only Controls whose current hard repository gates permit
+    # autonomous work enter discovery.  All Control summaries remain in the
+    # evidence so the devflow classifier can still detect identity ambiguity.
+    selected_documents = tuple(
+        document
+        for summary, document in zip(controls, inputs.control_documents)
+        if summary["state"] == "open"
+        and summary["trusted"] is True
+        and summary["repository_state"] == "ACTIVE"
+        and summary["human_gate"] is False
+        and summary["external_blocker"] is False
+    )
+    sources = tuple(
+        DurableIssueSource(document.repository, document.number)
+        for document in selected_documents
+    )
+    snapshot_reader = _ControlSnapshotReader(inputs.control_documents, issue_reader)
     frontier = enumerate_managed_frontier(
-        [source], issue_reader=issue_reader, state_reader=state_reader, now=now,
+        sources,
+        issue_reader=snapshot_reader,
+        state_reader=state_reader,
+        now=now,
         worker_id=inputs.worker_id,
     )
     if frontier.read is None:
         return evidence, ()
     evidence["coordinator_state_read"] = True
-    state = frontier.read.state.state
-    held = {
-        (claim.task, claim.role)
-        for claim in state.claims.values()
-        if claim.worker_id == inputs.worker_id
-    }
-    claimability = {
-        (projection.candidate.task, projection.candidate.role): projection.reason
-        for projection in frontier.claimability
-    }
+    claimability, held = _frontier_projection_context(
+        frontier, worker_id=inputs.worker_id
+    )
     candidates = frontier.candidates
+
+    metadata_by_key: dict[tuple[str, Role], object] = {}
+    metadata_complete = not frontier.read.discovery.failures
+    try:
+        for document in selected_documents:
+            for item in parse_portfolio_metadata(
+                document,
+                candidates=frontier.fresh_candidates,
+                now=now,
+            ):
+                key = (item.ranking.task, item.ranking.role)
+                if key in metadata_by_key:
+                    raise PortfolioMetadataError(
+                        "portfolio metadata duplicates one candidate across Controls"
+                    )
+                metadata_by_key[key] = item
+    except PortfolioMetadataError:
+        metadata_complete = False
+
+    fresh_keys = {(item.task, item.role) for item in frontier.fresh_candidates}
+    if set(metadata_by_key) != fresh_keys:
+        metadata_complete = False
+
+    projected: list[dict[str, Any]] = []
+    if metadata_complete:
+        ranked = rank_managed_frontier(
+            frontier,
+            [item.ranking for item in metadata_by_key.values()],
+            now=now,
+        )
+        ranked_keys = {(item.candidate.task, item.candidate.role) for item in ranked.ranked}
+        for candidate in candidates:
+            if candidate.role not in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY):
+                continue
+            if candidate.role is not Role.RECOVERY and (candidate.task, candidate.role) not in ranked_keys:
+                continue
+            item = _candidate_evidence(candidate, claimability, held, inputs.published)
+            if candidate.role is not Role.RECOVERY:
+                metadata = metadata_by_key[(candidate.task, candidate.role)]
+                item["dependency_ready"] = metadata.ranking.dependency_ready
+                item["rank_key"] = list(portable_rank_class_key(metadata.ranking))
+                item["required_capabilities"] = sorted(metadata.requirements.required_capabilities)
+                item["required_environment"] = sorted(metadata.requirements.required_environment)
+            projected.append(item)
+
     evidence["frontier"] = {
-        "complete": not frontier.read.discovery.failures,
-        "candidates": [
-            _candidate_evidence(candidate, claimability, held, inputs.published)
-            for candidate in candidates
-            if candidate.role in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY)
-        ],
+        "complete": metadata_complete,
+        "candidates": projected,
     }
     return evidence, candidates
 
@@ -256,7 +373,7 @@ def list_control_documents(token: str, reader: IssueReader) -> tuple[IssueDocume
 
 def run_pickup(
     *,
-    target_repository: str,
+    target_repository: str | None,
     observation: dict[str, Any],
     work_intent: str | None,
     devflow_tools: Any,
@@ -405,8 +522,8 @@ def main(argv: list[str] | None = None) -> int:
 
     parser = argparse.ArgumentParser(prog="python -m execution_coordinator.bootstrap_pickup")
     sub = parser.add_subparsers(dest="command", required=True)
-    pick = sub.add_parser("pickup", help="one discovery cycle for a target repository")
-    pick.add_argument("--target", required=True, help="owner/name of the managed repository")
+    pick = sub.add_parser("pickup", help="one discovery cycle for one repository or the managed portfolio")
+    pick.add_argument("--target", default=None, help="owner/name of the managed repository; omit for portfolio scope")
     pick.add_argument("--worker-system", required=True, choices=("codex", "claude", "chatgpt"))
     pick.add_argument("--devflow", required=True, help="path to a devflow checkout (contract tools)")
     pick.add_argument("--session-file", default=".chat-worker-session.json")

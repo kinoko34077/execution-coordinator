@@ -18,6 +18,7 @@ from execution_coordinator.discovery import IssueDocument
 from execution_coordinator.engine import CoordinationError
 from execution_coordinator.model import CoordinatorState, MutationResult, Role
 from execution_coordinator.mutate import apply_mutation
+from execution_coordinator.query import ClaimCandidate
 from execution_coordinator.ranking import candidate_fingerprint
 from execution_coordinator.snapshot import render_issue_body
 
@@ -160,6 +161,112 @@ class GatherEvidenceTests(unittest.TestCase):
         self.assertEqual((), candidates)
 
 
+def _portfolio_control(repository, control_number, task_number, *, priority="P2", metadata=True, next_action="`[IMPLEMENT] task`", ready_at=None):
+    task_body = f"## Scope\n\n{repository} bounded task"
+    role = Role.IMPLEMENTER
+    task_ref = f"{repository}#{task_number}"
+    entry_ref = f"https://github.com/{repository}/issues/{task_number}"
+    candidate = ClaimCandidate(
+        task=task_ref, role=role, entry_ref=entry_ref, conflict_keys=(),
+        scope_ready=True, blocked=False, requires_user_confirmation=False,
+    )
+    source_ref = f"kinoko34077/devflow#{control_number}"
+    envelope = {
+        "task": task_ref,
+        "task_body_sha256": _digest(task_body),
+        "task_work_status": "READY_FOR_IMPLEMENTATION",
+        "entry_ref": entry_ref,
+        "scope_ready": True,
+        "blocked": False,
+        "requires_user_confirmation": False,
+        "roles": [{"role": "implementer", "next_action_tag": "IMPLEMENT"}],
+    }
+    projection = {"schema_version": 1, "source_ref": source_ref, "repository": repository, "candidates": [envelope]}
+    portfolio = {
+        "schema_version": "execution-portfolio-metadata.v1",
+        "source_ref": source_ref,
+        "repository": repository,
+        "entries": [{
+            "task": task_ref, "role": "implementer", "task_body_sha256": _digest(task_body),
+            "candidate_fingerprint": candidate_fingerprint(candidate), "controller_urgency": None,
+            "dependency_ready": True, "dependency_order": task_number,
+            "readiness_class": "IMPLEMENT", "ready_at": ready_at,
+            "required_capabilities": ["python"], "required_environment": ["windows"],
+            "observed_at": "2026-09-28T15:55:00Z", "fresh_until": "2026-09-28T16:10:00Z",
+        }],
+    }
+    pblock = (
+        "\n<!-- DEVFLOW_EXECUTION_PORTFOLIO_METADATA_V1_BEGIN -->\n"
+        + json.dumps(portfolio)
+        + "\n<!-- DEVFLOW_EXECUTION_PORTFOLIO_METADATA_V1_END -->\n"
+    ) if metadata else ""
+    body = (
+        f"## Repository\n\n`{repository}`\n\n"
+        "## Work Status\n\n`READY_FOR_IMPLEMENTATION`\n\n"
+        "## Repository State\n\n`ACTIVE`\n\n"
+        f"## Priority\n\n`{priority}`\n\n"
+        f"## Next Action\n\n{next_action}\n\n"
+        f"{MARK_BEGIN}\n{json.dumps(projection)}\n{MARK_END}\n"
+        + pblock
+    )
+    name = repository.split("/", 1)[1]
+    return (
+        _doc("kinoko34077/devflow", control_number, body, title=f"[REPO] {name}"),
+        _doc(repository, task_number, task_body),
+        candidate,
+    )
+
+
+class PortfolioGatherEvidenceTests(unittest.TestCase):
+    def test_null_target_builds_complete_two_repository_frontier(self):
+        ca, ta, _ = _portfolio_control("owner/a", 201, 8, priority="P1")
+        cb, tb, _ = _portfolio_control("owner/b", 202, 9, priority="P2")
+        evidence, candidates = gather_evidence(
+            GatherInputs(target_repository=None, worker_id="chatgpt:s1", control_documents=(ca, cb), agents_md_read=True),
+            issue_reader=_Reader(ca, cb, ta, tb), state_reader=_Store(), now=NOW,
+        )
+        self.assertTrue(evidence["coordinator_state_read"])
+        self.assertTrue(evidence["frontier"]["complete"])
+        self.assertEqual(2, len(candidates))
+        by_task = {item["task_ref"]: item for item in evidence["frontier"]["candidates"]}
+        self.assertEqual([1, 1, 0, 8, 1, 1, ""], by_task["owner/a#8"]["rank_key"])
+        self.assertEqual(["python"], by_task["owner/a#8"]["required_capabilities"])
+        self.assertEqual(["windows"], by_task["owner/a#8"]["required_environment"])
+        self.assertEqual([2, 1, 0, 9, 1, 1, ""], by_task["owner/b#9"]["rank_key"])
+
+    def test_future_ready_at_is_filtered_by_existing_ranker_semantics(self):
+        ca, ta, _ = _portfolio_control("owner/a", 201, 8, ready_at="2026-09-28T16:05:00Z")
+        cb, tb, _ = _portfolio_control("owner/b", 202, 9)
+        evidence, candidates = gather_evidence(
+            GatherInputs(target_repository=None, worker_id="chatgpt:s1", control_documents=(ca, cb), agents_md_read=True),
+            issue_reader=_Reader(ca, cb, ta, tb), state_reader=_Store(), now=NOW,
+        )
+        self.assertTrue(evidence["frontier"]["complete"])
+        self.assertEqual(2, len(candidates))
+        self.assertEqual(["owner/b#9"], [item["task_ref"] for item in evidence["frontier"]["candidates"]])
+
+    def test_missing_metadata_on_one_published_candidate_makes_frontier_incomplete(self):
+        ca, ta, _ = _portfolio_control("owner/a", 201, 8)
+        cb, tb, _ = _portfolio_control("owner/b", 202, 9, metadata=False)
+        evidence, _ = gather_evidence(
+            GatherInputs(target_repository=None, worker_id="chatgpt:s1", control_documents=(ca, cb), agents_md_read=True),
+            issue_reader=_Reader(ca, cb, ta, tb), state_reader=_Store(), now=NOW,
+        )
+        self.assertTrue(evidence["coordinator_state_read"])
+        self.assertFalse(evidence["frontier"]["complete"])
+
+    def test_human_gated_repository_is_not_enumerated_into_other_repository_work(self):
+        ca, ta, _ = _portfolio_control("owner/a", 201, 8, next_action="`[HUMAN_GATE] decide`")
+        cb, tb, _ = _portfolio_control("owner/b", 202, 9)
+        evidence, candidates = gather_evidence(
+            GatherInputs(target_repository=None, worker_id="chatgpt:s1", control_documents=(ca, cb), agents_md_read=True),
+            issue_reader=_Reader(ca, cb, ta, tb), state_reader=_Store(), now=NOW,
+        )
+        self.assertTrue(evidence["frontier"]["complete"])
+        self.assertEqual(["owner/b#9"], [item["task_ref"] for item in evidence["frontier"]["candidates"]])
+        self.assertEqual(("owner/b#9",), tuple(candidate.task for candidate in candidates))
+
+
 class ExecuteSelectionTests(unittest.TestCase):
     def _result(self, candidate, **overrides):
         result = {
@@ -229,6 +336,44 @@ class RunPickupWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class PortfolioRunPickupWiringTests(unittest.TestCase):
+    def test_null_target_delegates_complete_cross_repository_evidence(self):
+        seen = {}
+
+        def build_request(observation, *, target_repository, work_intent, now):
+            self.assertIsNone(target_repository)
+            return {
+                "worker_system": "chatgpt", "worker_session_id": "s1",
+                "execution_attempt_id": "s1:c1", "target_repository": None,
+            }
+
+        def classify(request, evidence):
+            seen["request"] = request
+            seen["evidence"] = evidence
+            return {"claim_required": False, "disposition": "NO_ELIGIBLE_WORK"}
+
+        tools = types.SimpleNamespace(
+            chat_worker_profile=types.SimpleNamespace(build_request=build_request),
+            chat_worker_bootstrap=types.SimpleNamespace(classify=classify, validate_result=lambda result: None),
+        )
+        ca, ta, _ = _portfolio_control("owner/a", 201, 8, priority="P1")
+        cb, tb, _ = _portfolio_control("owner/b", 202, 9, priority="P2")
+        outcome = run_pickup(
+            target_repository=None, observation={}, work_intent="??????????????", devflow_tools=tools,
+            issue_reader=_Reader(ca, cb, ta, tb), state_reader=_Store(),
+            control_documents=(ca, cb), agents_md_read=True, now=NOW,
+        )
+        self.assertIsNone(outcome["claim_id"])
+        self.assertTrue(seen["evidence"]["frontier"]["complete"])
+        self.assertEqual(2, len(seen["evidence"]["frontier"]["candidates"]))
+
+    def test_cli_pickup_target_is_optional_for_portfolio_scope(self):
+        import inspect
+        source = inspect.getsource(__import__("execution_coordinator.bootstrap_pickup", fromlist=["main"]).main)
+        self.assertNotIn('pick.add_argument("--target", required=True', source)
 
 
 class _Profile:
