@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -14,6 +14,7 @@ Cross-repository authority:
 - devflow Issue #125 / PR #132 owns the accepted hash-bound durable-candidate source contract;
 - devflow Issues #155/#159 own the accepted Development Reconciliation Loop and `development-reconciliation-work.v1` publication contract;
 - devflow #208 / merged PR #220 own the accepted portfolio-scope broad-pickup v2 companion-metadata and null-target classification contract;
+- devflow #223 owns the accepted controller-first GitHub Actions auto-launch v1 design/plan;
 - devflow Repository Control #107 is the cross-repository summary/index for this repository;
 - Issue #28 / PR #32 own trusted Repository Control durable-candidate discovery/normalization;
 - Issue #44 / PR #45 own the additive runtime claimability-reason projection;
@@ -22,6 +23,7 @@ Cross-repository authority:
 - Issue #85 owns the portfolio-v2 runtime consumer/bootstrap implementation;
 - Issue #66 / PR #67 own the bounded agent-first one-claim autonomous cycle;
 - Issue #68 owns the provider-independent execution-request / worker-dispatch boundary;
+- Issue #87 / merged PR #88 own the accepted controller-first Actions auto-launch v1 runtime implementation;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 currently has no active claims. It retains historical generation/idempotency/audit evidence only.
@@ -294,12 +296,14 @@ fresh read result before starting a cycle.
 
 ### Provider-independent execution-request / worker-dispatch boundary
 
-Issue #68 provides the typed `ExecutionRequest` / `DispatchOutcome` boundary
-released by devflow Work Order #175. A request can be built only from a
-worker-matched candidate whose exact task/role/fingerprint/source/freshness
-evidence is still valid and from an already acknowledged `RUNNING` claim
-authority. It carries explicit required capability/environment tags and an
-immutable bootstrap-context payload without creating task authority.
+Issue #68 provides the typed `ExecutionRequest` / `DispatchOutcome` baseline
+released by devflow Work Order #175. The legacy `execution-request.v1` path
+remains bound to an already acknowledged `RUNNING` claim. Issue #87 / merged
+PR #88 add the versioned auto-launch path, which may construct an exact
+candidate-bound request from current `CLAIMED` authority so that provider
+context can be established before `acknowledge -> RUNNING`. Both paths retain
+exact task/role/fingerprint/source/freshness and capability/environment
+binding; neither request creates ownership outside the serialized claim lane.
 
 The adapter protocol distinguishes `LAUNCH_ACCEPTED`, `LAUNCH_UNAVAILABLE`,
 and `LAUNCH_FAILED`. Accepted starts must return the requested worker and
@@ -309,6 +313,43 @@ case. Stale requests, mismatched outcomes and unexpected transport failures
 fail closed; this surface adds no provider implementation, scheduler,
 controller, repo-monitor or second assignment authority.
 
+### Controller-first GitHub Actions auto-launch v1
+
+Issue #87 / merged PR #88 implement the accepted devflow #223 controller-first
+auto-launch design on main `1feb8a03983f6fa47b2b0051d8e30f927c0d14ef`.
+The controller wakes by schedule or manual `workflow_dispatch`, reuses the
+accepted portfolio ranking/capability evidence, and emits at most one bounded
+offer per cycle. ACCEPT/DECLINE/DEFER remains advisory until the existing
+serialized claim succeeds; no second queue or ownership authority is added.
+
+For normal auto-launch, one accepted offer is revalidated and claimed into
+`CLAIMED`; the versioned auto-launch request then establishes one Claude Code
+provider context before the same current claim is acknowledged to `RUNNING`.
+Unavailable launch releases, definite failed launch fails, and ambiguous launch
+enters lease-bound `WAITING:PROVIDER`; confirmed-live recovery uses `resume`.
+Stale generation/freshness/conflict/Human gates remain fail-closed.
+
+The v1 provider boundary is Claude/Claude Code with GitHub OIDC direction.
+Claude receives repository file tools only; target GitHub write operations use
+a separately scoped GitHub App token and deterministic workflow steps outside
+Claude. Credential, federation-rule, service-account, secret/variable and
+permission creation/change remain Human-gated. Ordinary ChatGPT remains on the
+manual-start #190/#202 path; Codex and event-driven wake remain deferred.
+
+Final PR-head verification passed 275 tests plus compile, a mandatory
+different-reviewer Claude Code review reported zero blocking findings on the
+exact final head, and post-main Verify run 36550128045 succeeded. A real manual
+controller run 36550418568 also succeeded through stale-claim expiry and offer
+preparation, returning `has_offer: false` with no claim or repository mutation.
+Runtime Issue #3 remained `claims: {}`.
+
+A real Claude/OIDC provider E2E remains blocked on explicit Human configuration:
+`AUTONOMOUS_GITHUB_APP_CLIENT_ID`, `AUTONOMOUS_GITHUB_APP_PRIVATE_KEY`,
+`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and
+`ANTHROPIC_SERVICE_ACCOUNT_ID` are currently absent. Their absence is an
+operational Human Gate, not authority to synthesize or broaden credentials.
+Adoption remains `PILOT`, and devflow #188/#105 PARK is not released solely by
+the no-offer controller pilot.
 ### Development Reconciliation demand adoption
 
 Issue #49 / PR #51 consumes the accepted devflow #159 `development-reconciliation-work.v1` projection from the trusted Repository Control.
