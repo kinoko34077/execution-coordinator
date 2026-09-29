@@ -95,6 +95,8 @@ def _candidate_evidence(
     claimability: dict[tuple[str, Role], ClaimabilityReason],
     held_by_worker: set[tuple[str, Role]],
     published: frozenset[tuple[str, Role]],
+    *,
+    work_class: str | None = None,
 ) -> dict[str, Any]:
     key = (candidate.task, candidate.role)
     reason = claimability.get(key)
@@ -102,7 +104,7 @@ def _candidate_evidence(
         task == candidate.task and role in (Role.IMPLEMENTER, Role.RECOVERY)
         for task, role in held_by_worker
     )
-    return {
+    item = {
         "task_ref": candidate.task,
         "role": candidate.role.value,
         "action": _ROLE_ACTION[candidate.role],
@@ -123,6 +125,9 @@ def _candidate_evidence(
         "required_capabilities": [],
         "required_environment": [],
     }
+    if work_class is not None:
+        item["work_class"] = work_class
+    return item
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,13 +241,23 @@ def gather_evidence(
         requirements_by_key = {
             (item.task, item.role): item for item in runtime.requirements
         }
+        work_class_by_key = {
+            (task, role): work_class
+            for task, role, work_class in runtime.work_classes
+        }
         for candidate in candidates:
             if candidate.role not in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY):
                 continue
             key = (candidate.task, candidate.role)
             if candidate.role is not Role.RECOVERY and key not in ranked_by_key:
                 continue
-            item = _candidate_evidence(candidate, claimability, held, inputs.published)
+            item = _candidate_evidence(
+                candidate,
+                claimability,
+                held,
+                inputs.published,
+                work_class=work_class_by_key.get(key),
+            )
             if candidate.role is not Role.RECOVERY:
                 ranked_item = ranked_by_key[key]
                 requirements = requirements_by_key[key]
