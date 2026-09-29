@@ -25,7 +25,7 @@ from .controller_offer import (
     evaluate_controller_offer,
     select_controller_offer,
 )
-from .discovery import IssueDocument, IssueReader
+from .discovery import TRUSTED_AUTHOR_ASSOCIATIONS, IssueDocument, IssueReader
 from .execution_request import (
     AUTO_LAUNCH_EXECUTION_REQUEST_SCHEMA_VERSION,
     BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
@@ -191,6 +191,39 @@ def _assert_no_secret(text: str) -> None:
         raise ValueError("controller context/prompt contains secret-shaped material")
 
 
+class _SnapshottingIssueReader:
+    """Capture the exact Issue documents used by one validation read."""
+
+    def __init__(self, delegate: IssueReader) -> None:
+        self._delegate = delegate
+        self._documents: dict[tuple[str, int], IssueDocument] = {}
+
+    def read_issue(self, repository: str, issue_number: int) -> IssueDocument:
+        document = self._delegate.read_issue(repository, issue_number)
+        self._documents[(repository, issue_number)] = document
+        return document
+
+    def snapshot(self, repository: str, issue_number: int) -> IssueDocument | None:
+        return self._documents.get((repository, issue_number))
+
+
+def _prompt_task_matches_validated_snapshot(
+    validated: IssueDocument | None,
+    fresh: IssueDocument,
+) -> bool:
+    if validated is None:
+        return False
+    return (
+        fresh.repository == validated.repository
+        and fresh.number == validated.number
+        and not fresh.is_pull_request
+        and fresh.state.casefold() == "open"
+        and fresh.author_association in TRUSTED_AUTHOR_ASSOCIATIONS
+        and fresh.html_url == validated.html_url
+        and fresh.body == validated.body
+    )
+
+
 def _work_prompt(
     *,
     task: str,
@@ -200,7 +233,27 @@ def _work_prompt(
     base_sha: str,
     branch: str,
 ) -> str:
-    prompt = f"""Implement the bounded owning task below inside the already checked-out repository.\n\nOwning task: {task}\nClaim authority:\n- claim_id: {claim_id}\n- generation: {generation}\n- base_sha: {base_sha}\n- branch: {branch}\n\nOwning Issue scope / acceptance:\n{task_body}\n\nHard boundaries:\n- Modify only files needed by the owning task and run relevant tests.\n- Do not push.\n- Do not create or update pull requests.\n- Do not merge, release, deploy, or publish.\n- Do not create, read, rotate, or modify credentials, secrets, sessions, or permissions.\n- Do not rewrite shared history.\n- Stop if the task requires a Human/User/security boundary.\n"""
+    prompt = f"""Implement the bounded owning task below inside the already checked-out repository.
+
+Owning task: {task}
+Claim authority:
+- claim_id: {claim_id}
+- generation: {generation}
+- base_sha: {base_sha}
+- branch: {branch}
+
+Owning Issue scope / acceptance:
+{task_body}
+
+Hard boundaries:
+- Modify only files needed by the owning task and run relevant tests.
+- Do not push.
+- Do not create or update pull requests.
+- Do not merge, release, deploy, or publish.
+- Do not create, read, rotate, or modify credentials, secrets, sessions, or permissions.
+- Do not rewrite shared history.
+- Stop if the task requires a Human/User/security boundary.
+"""
     _assert_no_secret(prompt)
     return prompt
 
@@ -266,9 +319,10 @@ def accept_and_claim(
         observed_at=now,
         fresh_until=now + timedelta(minutes=60),
     )
+    snapshot_reader = _SnapshottingIssueReader(issue_reader)
     current = read_portfolio_runtime(
         tuple(control_documents),
-        issue_reader=issue_reader,
+        issue_reader=snapshot_reader,
         state_reader=state_reader,
         worker_id=worker_id,
         now=now,
@@ -283,7 +337,10 @@ def accept_and_claim(
     if code is not OfferResponseCode.ACCEPTED or match is None:
         return {"result": code.value, "claim_id": None}
     repository, issue = _task_parts(offer.task)
+    validated_task = snapshot_reader.snapshot(repository, issue)
     task_document = issue_reader.read_issue(repository, issue)
+    if not _prompt_task_matches_validated_snapshot(validated_task, task_document):
+        return {"result": OfferResponseCode.DEFERRED_BUSY.value, "claim_id": None}
     _assert_no_secret(task_document.body)
     if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", base_sha):
         raise ValueError("base_sha must be an exact 40-hex commit SHA")
