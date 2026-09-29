@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import types
 import unittest
 from datetime import datetime, timezone
 
-from execution_coordinator.bootstrap_pickup import GatherInputs, gather_evidence
+from execution_coordinator.bootstrap_pickup import GatherInputs, gather_evidence, run_pickup
 from execution_coordinator.discovery import IssueDocument
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.portfolio_metadata import PortfolioMetadataError, parse_portfolio_metadata
@@ -182,6 +183,83 @@ class Stage1PortfolioWorkClassTests(unittest.TestCase):
         self.assertTrue(evidence["frontier"]["complete"])
         [item] = evidence["frontier"]["candidates"]
         self.assertNotIn("work_class", item)
+
+
+class Stage1AcceptedWorkClassRequestTests(unittest.TestCase):
+    def _tools(self, seen: dict[str, object]):
+        def build_request(observation, *, target_repository, work_intent, now):
+            return {
+                "schema_version": "chat-worker-bootstrap-request.v1",
+                "target_repository": target_repository,
+                "work_intent": work_intent,
+                "worker_system": "chatgpt",
+                "worker_session_id": "chatgpt-20260929T081500Z-abc123",
+                "execution_attempt_id": "chatgpt-20260929T081500Z-abc123:c1",
+                "capabilities": [],
+                "environment": [],
+                "tool_surfaces": [],
+                "observed_at": "2026-09-29T08:15:00Z",
+            }
+
+        def normalize_request(request):
+            normalized = dict(request)
+            if "accepted_work_classes" in normalized:
+                values = normalized["accepted_work_classes"]
+                if not values or len(values) != len(set(values)):
+                    raise ValueError("invalid accepted_work_classes")
+                normalized["accepted_work_classes"] = sorted(values)
+            seen["normalized"] = normalized
+            return normalized
+
+        def classify(request, evidence):
+            seen["classified"] = request
+            return {"claim_required": False, "disposition": "NO_ELIGIBLE_WORK"}
+
+        return types.SimpleNamespace(
+            chat_worker_profile=types.SimpleNamespace(build_request=build_request),
+            chat_worker_bootstrap=types.SimpleNamespace(
+                normalize_request=normalize_request,
+                classify=classify,
+                validate_result=lambda result: None,
+            ),
+        )
+
+    def test_run_pickup_threads_explicit_accepted_work_classes_into_request(self):
+        seen: dict[str, object] = {}
+        control = _control()
+        task = _doc("owner/repo", 8, TASK_BODY, title="Task")
+        outcome = run_pickup(
+            target_repository="owner/repo",
+            observation={},
+            work_intent="軽い保守だけ",
+            accepted_work_classes=("quickfix", "sync-check"),
+            devflow_tools=self._tools(seen),
+            issue_reader=_Reader(control, task),
+            state_reader=_StateReader(),
+            control_documents=(control,),
+            agents_md_read=True,
+            now=NOW,
+        )
+        self.assertEqual(["quickfix", "sync-check"], outcome["request"]["accepted_work_classes"])
+        self.assertEqual(outcome["request"], seen["classified"])
+
+    def test_run_pickup_omits_constraint_when_not_requested(self):
+        seen: dict[str, object] = {}
+        control = _control()
+        task = _doc("owner/repo", 8, TASK_BODY, title="Task")
+        outcome = run_pickup(
+            target_repository="owner/repo",
+            observation={},
+            work_intent="なんか作業して",
+            accepted_work_classes=None,
+            devflow_tools=self._tools(seen),
+            issue_reader=_Reader(control, task),
+            state_reader=_StateReader(),
+            control_documents=(control,),
+            agents_md_read=True,
+            now=NOW,
+        )
+        self.assertNotIn("accepted_work_classes", outcome["request"])
 
 
 if __name__ == "__main__":
