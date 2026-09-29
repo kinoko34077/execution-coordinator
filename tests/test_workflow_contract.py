@@ -104,6 +104,19 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("token: ${{ steps.app-token.outputs.token }}", text)
         self.assertIn("persist-credentials: false", text)
 
+    def test_auto_launch_preflight_does_not_invent_shell_or_network_capability_for_claude(self) -> None:
+        text = self._auto_launch_text()
+        start = text.index("name: Probe exact launcher environment")
+        end = text.index("name: Accept and claim")
+        block = text[start:end]
+        self.assertNotIn('("python3", "python")', block)
+        self.assertNotIn('("git", "git")', block)
+        self.assertNotIn('("node", "node")', block)
+        self.assertNotIn('environment.append("github-network")', block)
+        self.assertNotIn('environment.append("github-actions-lane")', block)
+        self.assertIn('capabilities.append("repo-checkout")', block)
+        self.assertIn('environment.append("linux")', block)
+
     def test_auto_launch_claude_uses_oidc_isolated_mode_then_exact_resumed_file_tools(self) -> None:
         text = self._auto_launch_text()
         for name in (
