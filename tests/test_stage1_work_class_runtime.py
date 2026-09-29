@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from execution_coordinator.bootstrap_pickup import GatherInputs, gather_evidence, run_pickup
 from execution_coordinator.discovery import IssueDocument
 from execution_coordinator.model import CoordinatorState, Role
-from execution_coordinator.portfolio_metadata import PortfolioMetadataError, parse_portfolio_metadata
+from execution_coordinator.portfolio_metadata import WORK_CLASSES, PortfolioMetadataError, parse_portfolio_metadata
 from execution_coordinator.query import ClaimCandidate
 from execution_coordinator.ranking import candidate_fingerprint
 from execution_coordinator.snapshot import render_issue_body
@@ -218,6 +218,7 @@ class Stage1AcceptedWorkClassRequestTests(unittest.TestCase):
         return types.SimpleNamespace(
             chat_worker_profile=types.SimpleNamespace(build_request=build_request),
             chat_worker_bootstrap=types.SimpleNamespace(
+                WORK_CLASSES=tuple(sorted(WORK_CLASSES)),
                 normalize_request=normalize_request,
                 classify=classify,
                 validate_result=lambda result: None,
@@ -260,6 +261,24 @@ class Stage1AcceptedWorkClassRequestTests(unittest.TestCase):
             now=NOW,
         )
         self.assertNotIn("accepted_work_classes", outcome["request"])
+
+    def test_run_pickup_fails_closed_when_work_class_contract_drifts(self):
+        seen: dict[str, object] = {}
+        tools = self._tools(seen)
+        tools.chat_worker_bootstrap.WORK_CLASSES = tuple(sorted((*WORK_CLASSES, "future-class")))
+        with self.assertRaisesRegex(RuntimeError, "work.class contract"):
+            run_pickup(
+                target_repository="owner/repo",
+                observation={},
+                work_intent="軽い保守だけ",
+                accepted_work_classes=("quickfix",),
+                devflow_tools=tools,
+                issue_reader=_Reader(),
+                state_reader=_StateReader(),
+                control_documents=(),
+                agents_md_read=True,
+                now=NOW,
+            )
 
 
 if __name__ == "__main__":
