@@ -18,6 +18,7 @@ from execution_coordinator.discovery import IssueDocument
 from execution_coordinator.engine import CoordinationError
 from execution_coordinator.model import CoordinatorState, MutationResult, Role
 from execution_coordinator.mutate import apply_mutation
+from execution_coordinator.query import ClaimCandidate
 from execution_coordinator.ranking import candidate_fingerprint
 from execution_coordinator.snapshot import render_issue_body
 
@@ -165,7 +166,7 @@ def _portfolio_control(repository, control_number, task_number, *, priority="P2"
     role = Role.IMPLEMENTER
     task_ref = f"{repository}#{task_number}"
     entry_ref = f"https://github.com/{repository}/issues/{task_number}"
-    candidate = __import__("execution_coordinator.query", fromlist=["ClaimCandidate"]).ClaimCandidate(
+    candidate = ClaimCandidate(
         task=task_ref, role=role, entry_ref=entry_ref, conflict_keys=(),
         scope_ready=True, blocked=False, requires_user_confirmation=False,
     )

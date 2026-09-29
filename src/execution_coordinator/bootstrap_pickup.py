@@ -39,7 +39,7 @@ from .discovery import (
     _sections,
     _strip_code_value,
 )
-from .managed_frontier import enumerate_managed_frontier
+from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
 from .portfolio_metadata import PortfolioMetadataError, parse_portfolio_metadata
@@ -149,10 +149,9 @@ class _ControlSnapshotReader:
 
 
 def _frontier_projection_context(
-    frontier: object,
+    frontier: ManagedFrontierResult,
     *,
     worker_id: str,
-    published: frozenset[tuple[str, Role]],
 ) -> tuple[dict[tuple[str, Role], ClaimabilityReason], set[tuple[str, Role]]]:
     assert getattr(frontier, "read", None) is not None
     state = frontier.read.state.state
@@ -213,7 +212,7 @@ def gather_evidence(
             return evidence, ()
         evidence["coordinator_state_read"] = True
         claimability, held = _frontier_projection_context(
-            frontier, worker_id=inputs.worker_id, published=inputs.published
+            frontier, worker_id=inputs.worker_id
         )
         candidates = frontier.candidates
         evidence["frontier"] = {
@@ -254,7 +253,7 @@ def gather_evidence(
         return evidence, ()
     evidence["coordinator_state_read"] = True
     claimability, held = _frontier_projection_context(
-        frontier, worker_id=inputs.worker_id, published=inputs.published
+        frontier, worker_id=inputs.worker_id
     )
     candidates = frontier.candidates
 
