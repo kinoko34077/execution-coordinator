@@ -306,12 +306,13 @@ exact task/role/fingerprint/source/freshness and capability/environment
 binding; neither request creates ownership outside the serialized claim lane.
 
 The adapter protocol distinguishes `LAUNCH_ACCEPTED`, `LAUNCH_UNAVAILABLE`,
-and `LAUNCH_FAILED`. Accepted starts must return the requested worker and
-session identity. Unavailable or failed starts carry explicit reconciliation
-evidence for the existing claim, including the pre-acknowledge worker-death
-case. Stale requests, mismatched outcomes and unexpected transport failures
-fail closed; this surface adds no provider implementation, scheduler,
-controller, repo-monitor or second assignment authority.
+`LAUNCH_FAILED`, and the auto-launch `LAUNCH_AMBIGUOUS` disposition. Accepted
+starts must return the requested worker and session identity. Unavailable,
+failed, or ambiguous starts carry explicit reconciliation evidence for the
+existing claim; ambiguous launch is handled by the v1 lease-bound
+`WAITING:PROVIDER` path described below. Stale requests, mismatched outcomes
+and unexpected transport failures fail closed; the request/dispatch boundary
+itself adds no second scheduling or ownership authority.
 
 ### Controller-first GitHub Actions auto-launch v1
 
