@@ -8,13 +8,13 @@ from uuid import UUID
 
 from execution_coordinator.actions_controller import (
     accept_and_claim,
-    expire_stale_claims,
     finalize_work,
     prepare_offer,
     reconcile_bootstrap,
 )
 from execution_coordinator.agent import AgentSession
 from execution_coordinator.model import ExecutionState, Role
+from execution_coordinator.runtime_maintenance import expire_stale_claims
 from execution_coordinator.snapshot import parse_issue_body
 from tests.test_agent import _Gateway
 from tests.test_bootstrap_pickup import NOW, _Reader, _Store, _doc, _portfolio_control
