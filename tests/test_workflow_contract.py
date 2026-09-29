@@ -104,7 +104,7 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("token: ${{ steps.app-token.outputs.token }}", text)
         self.assertIn("persist-credentials: false", text)
 
-    def test_auto_launch_claude_uses_oidc_bootstrap_then_exact_resumed_file_tools(self) -> None:
+    def test_auto_launch_claude_uses_oidc_isolated_mode_then_exact_resumed_file_tools(self) -> None:
         text = self._auto_launch_text()
         for name in (
             "ANTHROPIC_FEDERATION_RULE_ID",
@@ -122,6 +122,8 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertLess(reconcile, work)
 
         bootstrap_block = text[bootstrap:reconcile]
+        self.assertIn("--safe-mode", bootstrap_block)
+        self.assertNotIn("--bare", bootstrap_block)
         self.assertIn('--tools ""', bootstrap_block)
         self.assertIn("--max-turns 1", bootstrap_block)
         self.assertIn("--session-id", bootstrap_block)
@@ -131,8 +133,10 @@ class WorkflowContractTests(unittest.TestCase):
             work_block_end = len(text)
         work_block = text[work:work_block_end]
         self.assertIn("steps.reconcile.outputs.state == 'RUNNING'", work_block)
+        self.assertIn("--safe-mode", work_block)
+        self.assertNotIn("--bare", work_block)
         self.assertIn("--resume", work_block)
-        self.assertIn('--tools "Read,Glob,Grep,Edit,Write"', work_block)
+        self.assertIn('--tools "Read,Edit,Write"', work_block)
         self.assertNotIn("Bash", work_block)
         self.assertNotIn("GITHUB_TOKEN", work_block)
         self.assertNotIn("steps.app-token.outputs.token", work_block)
