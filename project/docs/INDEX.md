@@ -22,6 +22,8 @@
 - `src/execution_coordinator/frontier.py` — read-only composition of trusted discovery, runtime state and claimability projections.
 - `src/execution_coordinator/managed_frontier.py` — deterministic read-only enumeration of normal and reconciliation demand from exact managed-repository Control identities.
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.
+- `src/execution_coordinator/portfolio_metadata.py` ? strict portfolio-v2 companion metadata binding into existing ranking/requirements evidence.
+- `src/execution_coordinator/bootstrap_pickup.py` ? repository-scoped v1 plus portfolio null-target evidence composition and the existing single-selection claim bridge.
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
@@ -53,6 +55,10 @@
 ## Phase 3 exact capability/environment matching
 
 - Issue #64 — bounded `match_ranked_frontier()` / `match_ranked_frontier_for_workers()` projection with versioned worker and candidate evidence, exact subset matching, per-worker fail-closed omissions, and a separate recovery track; no ownership or runtime mutation.
+
+## Portfolio-scope broad pickup v2
+
+- Issue #85 ? accepted devflow #208 / PR #220 runtime consumer: strict companion metadata validation, binding to current v1 candidate body digest + fingerprint, existing ranking hard-filter reuse, exact requirement projection, null-target managed-portfolio evidence composition, and one-selection/no-fallthrough claim integration. Repository-scoped v1 remains compatible; recovery stays separate.
 
 ## Phase 4 agent-first autonomous cycle
 

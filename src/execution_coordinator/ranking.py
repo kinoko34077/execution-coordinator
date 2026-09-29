@@ -192,6 +192,35 @@ def _rank_key(metadata: RankingMetadata) -> tuple[object, ...]:
     )
 
 
+def portable_rank_class_key(metadata: RankingMetadata) -> tuple[object, ...]:
+    """Return a JSON-friendly rank class equivalent to the policy ordering.
+
+    Canonical task/role identity is intentionally excluded: portfolio-v2 uses
+    worker-scoped deterministic spread only after this rank class is fixed.
+    """
+
+    if not isinstance(metadata, RankingMetadata):
+        raise TypeError("metadata must be RankingMetadata")
+    assert metadata.dependency_order is not None
+    urgency_missing = 0 if metadata.controller_urgency is not None else 1
+    urgency_order = 100 - metadata.controller_urgency if metadata.controller_urgency is not None else 0
+    ready_missing = 0 if metadata.ready_at is not None else 1
+    ready_value = (
+        metadata.ready_at.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        if metadata.ready_at is not None
+        else ""
+    )
+    return (
+        _PRIORITY_ORDER[metadata.control_priority],
+        urgency_missing,
+        urgency_order,
+        metadata.dependency_order,
+        _READINESS_ORDER[metadata.readiness_class],
+        ready_missing,
+        ready_value,
+    )
+
+
 def _omission(
     candidate: ClaimCandidate | None,
     reason: str,

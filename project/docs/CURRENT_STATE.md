@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + BOUNDED AUTONOMOUS CYCLE + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -13,11 +13,13 @@ Cross-repository authority:
 - devflow Issue #106 / merged PR #108 owns Protocol v1 foundation semantics;
 - devflow Issue #125 / PR #132 owns the accepted hash-bound durable-candidate source contract;
 - devflow Issues #155/#159 own the accepted Development Reconciliation Loop and `development-reconciliation-work.v1` publication contract;
+- devflow #208 / merged PR #220 own the accepted portfolio-scope broad-pickup v2 companion-metadata and null-target classification contract;
 - devflow Repository Control #107 is the cross-repository summary/index for this repository;
 - Issue #28 / PR #32 own trusted Repository Control durable-candidate discovery/normalization;
 - Issue #44 / PR #45 own the additive runtime claimability-reason projection;
 - Issue #48 / PR #50 own runtime `GitHubStateStore` observed-authority identity hardening;
 - Issue #49 / PR #51 own accepted reviewer/recovery reconciliation-demand adoption;
+- Issue #85 owns the portfolio-v2 runtime consumer/bootstrap implementation;
 - Issue #66 / PR #67 own the bounded agent-first one-claim autonomous cycle;
 - Issue #68 owns the provider-independent execution-request / worker-dispatch boundary;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
@@ -235,6 +237,42 @@ worker, so one worker's stale or incompatible profile cannot suppress another
 worker's independent projection. The surface performs no selection, claim or
 lease mutation, scheduling, provider/controller work, repo-monitor work, or
 Issue #3 mutation.
+
+### Portfolio-scope broad pickup v2 runtime
+
+Issue #85 implements the accepted devflow #208 / PR #220 portfolio contract
+on top of the existing discovery, ranking, capability and claim authorities.
+Repository-scoped broad pickup remains compatible with the accepted v1 path.
+For `target_repository = null`, the bootstrap reads the eligible managed
+Repository Controls as one pinned Control snapshot, enumerates the managed
+frontier, and requires a fresh `DEVFLOW_EXECUTION_PORTFOLIO_METADATA_V1`
+companion entry for every ordinary fresh v1 candidate.
+
+The companion consumer fails closed on malformed/duplicate/reversed markers,
+unknown fields, Control source/repository/priority mismatch, duplicate
+`(task, role)` entries, stale/future evidence, task-body digest mismatch, and
+candidate-fingerprint mismatch. Valid entries are converted into the existing
+`RankingMetadata` and `CandidateRequirements` types; no ranking, capability or
+environment value is inferred from Issue prose, Projects, provider/model
+identity, branch activity or chat history.
+
+Portfolio candidate readiness is passed through the existing
+`rank_managed_frontier()` hard filters, including runtime claimability,
+dependency readiness and future `ready_at`. The runtime projects a portable
+rank-class key that excludes canonical task/role tie identity so the accepted
+devflow classifier can apply worker-scoped deterministic spread only after
+fixing the best track and rank class. Exact requirement tags are projected
+from the validated `CandidateRequirements`; recovery demand remains separate
+and does not require ordinary portfolio metadata.
+
+The existing `execute_selection()` remains the only mutation bridge for this
+bootstrap path: one selected candidate is re-observed by task/role/fingerprint,
+then exactly one serialized claim is attempted and acknowledged. Claim
+rejection ends the cycle; there is no fallback to candidate 2. The command-line
+bootstrap accepts omitted `--target` for portfolio scope, while the existing
+Actions-side targeted transport remains compatible. No provider launcher,
+controller negotiation, work stealing, daemon scheduler or second assignment
+authority is introduced.
 
 ### Agent-first bounded autonomous cycle
 
