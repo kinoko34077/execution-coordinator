@@ -456,6 +456,18 @@ class AgentSessionTests(unittest.TestCase):
                 expected_worker_id="worker-b",
             )
 
+        calls_before = len(gateway.calls)
+        with self.assertRaisesRegex(ValueError, "expired"):
+            AgentSession.from_current_claim(
+                gateway,
+                claim,
+                expected_task="kinoko34077/example#1",
+                expected_role=Role.IMPLEMENTER,
+                expected_worker_id="worker-a",
+                now=T0 + timedelta(minutes=16),
+            )
+        self.assertEqual(calls_before, len(gateway.calls))
+
 
 if __name__ == "__main__":
     unittest.main()

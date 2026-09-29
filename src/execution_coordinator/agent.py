@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Callable, Protocol, TypeVar
 
 from .model import Claim, ExecutionState, MutationResult, Role, WaitReason
@@ -69,6 +70,7 @@ class AgentSession:
         expected_task: str,
         expected_role: Role | str,
         expected_worker_id: str,
+        now: datetime | None = None,
     ) -> "AgentSession":
         if not isinstance(claim, Claim):
             raise TypeError("claim must be a Claim")
@@ -79,6 +81,12 @@ class AgentSession:
             raise ValueError("current claim role does not match expected role")
         if claim.worker_id != expected_worker_id:
             raise ValueError("current claim worker does not match expected worker")
+        if now is not None:
+            if now.tzinfo is None or now.utcoffset() is None:
+                raise ValueError("now must be timezone-aware")
+            current = now.astimezone(timezone.utc)
+            if claim.lease_until <= current:
+                raise ValueError("current claim lease is expired")
         session = cls(
             gateway,
             task=claim.task,
