@@ -15,6 +15,7 @@ Command grammar (one ``key: value`` per line after the command line)::
     cycle: <N>                          (optional; default 1)
     capabilities: python, tests         (optional; exact tags)
     environment: linux                  (optional; exact tags)
+    work_class: audit, triage           (optional; accepted Stage-1 classes)
     intent: <the user's words>          (optional; audit only)
 
     /release
@@ -34,7 +35,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 TRUSTED = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
-PICKUP_KEYS = frozenset({"target", "worker_system", "session", "cycle", "capabilities", "environment", "intent"})
+PICKUP_KEYS = frozenset({"target", "worker_system", "session", "cycle", "capabilities", "environment", "work_class", "intent"})
 RELEASE_KEYS = frozenset({"session", "claim_id", "generation"})
 # Surfaces supplied by the Actions transport itself.  They describe the
 # transport path, never the worker's capabilities.
@@ -130,6 +131,15 @@ def build_observation(fields: dict[str, str], profile_tools: Any, now: datetime)
     }
 
 
+def _accepted_work_classes(fields: dict[str, str]) -> tuple[str, ...] | None:
+    raw = fields.get("work_class")
+    if raw is None:
+        return None
+    # Transport-only normalization: canonical vocabulary, duplicate, and
+    # empty-value validation remains in the accepted devflow core contract.
+    return tuple(part.strip() for part in raw.split(","))
+
+
 def format_reply(payload: dict[str, Any]) -> str:
     return (
         "### Chat worker pickup result\n\n```json\n"
@@ -178,6 +188,7 @@ def handle(
             target_repository=fields["target"],
             observation=observation,
             work_intent=fields.get("intent"),
+            accepted_work_classes=_accepted_work_classes(fields),
         )
     except CommandRejected as rejection:
         return {"status": "REJECTED", "reason_code": rejection.code, "detail": str(rejection)}
