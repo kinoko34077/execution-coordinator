@@ -37,6 +37,7 @@ class _Profile:
 
 TOOLS = types.SimpleNamespace(chat_worker_profile=_Profile)
 PICKUP = "/pickup\ntarget: kinoko34077/execution-coordinator\nworker_system: chatgpt\ncapabilities: python\nintent: このリポ側に合わせてなんか作業して"
+PORTFOLIO_PICKUP = "/pickup\nworker_system: chatgpt\nintent: portfolio maintenance pickup"
 WORKCLASS_PICKUP = (
     "/pickup\n"
     "target: kinoko34077/devflow\n"
@@ -61,6 +62,12 @@ class ParserTests(unittest.TestCase):
         self.assertEqual("chatgpt", fields["worker_system"])
         self.assertEqual("このリポ側に合わせてなんか作業して", fields["intent"])
 
+    def test_pickup_accepts_missing_target_for_portfolio_scope(self):
+        command, fields = parse_command(PORTFOLIO_PICKUP)
+        self.assertEqual("pickup", command)
+        self.assertEqual("chatgpt", fields["worker_system"])
+        self.assertNotIn("target", fields)
+
     def test_pickup_accepts_work_class_transport_field(self):
         command, fields = parse_command(WORKCLASS_PICKUP)
         self.assertEqual("pickup", command)
@@ -74,7 +81,6 @@ class ParserTests(unittest.TestCase):
 
     def test_malformed_commands_are_rejected(self):
         cases = [
-            "/pickup\nworker_system: claude",  # missing target
             "/pickup\ntarget: a/b\nworker_system: claude\nbogus: 1",
             "/pickup\ntarget: a/b\ntarget: c/d\nworker_system: claude",
             "/pickup\ntarget: a/b\nworker_system: claude\nsession: ghp_abc",
@@ -138,7 +144,7 @@ class HandleTests(unittest.TestCase):
         self.assertEqual([], calls["pickup"])
 
     def test_malformed_trusted_command_gets_typed_rejection_without_mutation(self):
-        reply, calls = self._run("/pickup\nworker_system: claude")
+        reply, calls = self._run("/pickup\nworker_system: claude\nbogus: 1")
         self.assertEqual(("REJECTED", "COMMAND_MALFORMED"), (reply["status"], reply["reason_code"]))
         self.assertEqual([], calls["pickup"])
 
@@ -149,6 +155,11 @@ class HandleTests(unittest.TestCase):
         self.assertTrue(calls["pickup"][0]["observation"]["probes"]["exec.python3"])
         self.assertIsNone(calls["pickup"][0]["accepted_work_classes"])
         self.assertIsNone(reply["release_command"])
+
+    def test_pickup_without_target_forwards_portfolio_scope(self):
+        reply, calls = self._run(PORTFOLIO_PICKUP)
+        self.assertEqual("NO_CLAIM", reply["status"])
+        self.assertIsNone(calls["pickup"][0]["target_repository"])
 
     def test_pickup_forwards_requested_work_classes(self):
         reply, calls = self._run(WORKCLASS_PICKUP)
