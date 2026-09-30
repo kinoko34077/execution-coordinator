@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP WORK-CLASS + PORTFOLIO TRANSPORT + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -14,6 +14,7 @@ Cross-repository authority:
 - devflow Issue #125 / PR #132 owns the accepted hash-bound durable-candidate source contract;
 - devflow Issues #155/#159 own the accepted Development Reconciliation Loop and `development-reconciliation-work.v1` publication contract;
 - devflow #208 / merged PR #220 own the accepted portfolio-scope broad-pickup v2 companion-metadata and null-target classification contract;
+- devflow #215 / merged PR #226 own the accepted Stage 1 work-class policy/classification contract;
 - devflow #223 owns the accepted controller-first GitHub Actions auto-launch v1 design/plan;
 - devflow Repository Control #107 is the cross-repository summary/index for this repository;
 - Issue #28 / PR #32 own trusted Repository Control durable-candidate discovery/normalization;
@@ -25,6 +26,8 @@ Cross-repository authority:
 - Issue #68 owns the provider-independent execution-request / worker-dispatch boundary;
 - Issue #87 / merged PR #88 own the accepted controller-first Actions auto-launch v1 runtime implementation;
 - Issue #89 / merged PR #90 own the accepted Stage 1 work-class runtime propagation;
+- Issue #94 / merged PR #95 own accepted Issue-comment `work_class` transport parity;
+- Issue #97 / merged PR #98 own accepted Issue-comment optional-target portfolio reachability;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
@@ -272,10 +275,11 @@ The existing `execute_selection()` remains the only mutation bridge for this
 bootstrap path: one selected candidate is re-observed by task/role/fingerprint,
 then exactly one serialized claim is attempted and acknowledged. Claim
 rejection ends the cycle; there is no fallback to candidate 2. The command-line
-bootstrap accepts omitted `--target` for portfolio scope, while the existing
-Actions-side targeted transport remains compatible. No provider launcher,
-controller negotiation, work stealing, daemon scheduler or second assignment
-authority is introduced.
+bootstrap accepts omitted `--target` for portfolio scope. The accepted trusted
+Issue-comment transport also accepts omitted `/pickup target:` and maps it to
+`target_repository=None`, while explicit repository targets remain compatible.
+No provider launcher, controller negotiation, work stealing, daemon scheduler
+or second assignment authority is introduced.
 
 ### Agent-first bounded autonomous cycle
 
@@ -355,7 +359,7 @@ the no-offer controller pilot.
 
 ### Stage 1 work-class runtime propagation
 
-Issue #89 / merged PR #90 implement the accepted devflow #215 Stage 1 contract on current accepted main `54e2a98c59e156b0563f1cc5e8fe0f125558b5cf`.
+Issue #89 / merged PR #90 implement the accepted devflow #215 Stage 1 contract.
 
 The accepted runtime boundary:
 - accepts optional closed-vocabulary `work_class` in `DEVFLOW_EXECUTION_PORTFOLIO_METADATA_V1` companion entries;
@@ -367,6 +371,18 @@ The accepted runtime boundary:
 - preserves existing freshness, capability/environment, ranking, claim, no-fallthrough, provider-launch, and Issue #3 authority boundaries.
 
 Stage 2 audit/triage supply automation and Stage 3 batching/rotation are not released by Stage 1 acceptance. The real Claude/OIDC provider E2E Human Gate and `PILOT` / devflow #188/#105 PARK boundaries remain unchanged.
+
+### Stage 1 trusted Issue-comment pickup transport
+
+Issue #94 / merged PR #95 extend only the trusted Issue-comment `/pickup` transport so optional comma-separated `work_class` values are whitespace-trimmed and forwarded in declared order as `accepted_work_classes` to the already-accepted runtime/classifier path. Omitting `work_class` preserves `accepted_work_classes=None`. Canonical vocabulary, duplicate/empty-value rejection, role/class semantics, ranking, candidate discovery, claim/lease authority and Human gates remain owned by the accepted devflow/runtime contracts rather than a second transport taxonomy.
+
+Issue #97 / merged PR #98 make `/pickup target:` optional. When present, repository-scoped behavior is unchanged; when omitted, the transport passes `target_repository=None` and reaches the already-accepted portfolio-scope path. `worker_system` remains required and `/release` grammar is unchanged.
+
+Accepted transport evidence:
+- #94 / PR #95 reviewed head `77822567e9c3394e62ecd2acaea6d2f5a7e8aafc`, PR Verify `36663015030` SUCCESS, Formal Review v2 `5361037472` with zero blocking findings, post-main Verify `36663126842` SUCCESS;
+- #97 / PR #98 TDD RED head `e646885b84b3c1536abd6568a41684414034ee78` / Verify `36664623106` FAILURE in Unit tests before production change, reviewed head `d115131ba958a69a7f590ad130dc24257a7252af`, PR Verify `36664746320` SUCCESS, Formal Review v2 `5361168055` with zero blocking findings, accepted main `c8e1c7972dca8f8a0c6065815152da8ef72f5989`, post-main Verify `36664825599` SUCCESS.
+
+Issue #83 is the operational command surface. It does not replace devflow durable task truth or runtime Issue #3 authority. The transport adds no provider launcher, scheduler, second queue/database, independent taxonomy, or completion authority.
 
 ### Development Reconciliation demand adoption
 
@@ -495,10 +511,11 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 - repo-monitor remains observer-only;
 - no discovery/publication result, execution claim, or eligibility projection overrides release/deploy/publication/credential/permission/destructive/user-decision confirmation boundaries;
 - #49, #66 and #68 acceptance does not release any scheduler/provider/controller/repo-monitor slice;
-- #87/#88 controller-first acceptance and #89/#90 Stage 1 acceptance do not release real provider identity configuration, Stage 2/3, adoption expansion, or devflow #188/#105 PARK.
+- #87/#88 controller-first acceptance and #89/#90 Stage 1 runtime acceptance do not release real provider identity configuration, Stage 2/3, adoption expansion, or devflow #188/#105 PARK;
+- #94/#95 and #97/#98 transport acceptance exposes only already-accepted pickup inputs and does not create a second classification, scheduling, claim, completion, or provider authority.
 
 ## Next action
 
-Controller-first GitHub Actions auto-launch v1 (#87/#88) and Stage 1 work-class runtime propagation (#89/#90) are accepted on current main `54e2a98c59e156b0563f1cc5e8fe0f125558b5cf`.
+Controller-first GitHub Actions auto-launch v1 (#87/#88), Stage 1 work-class runtime propagation (#89/#90), Issue-comment work-class transport (#94/#95), and target-omitted portfolio reachability (#97/#98) are accepted. The latest accepted runtime/transport main before this documentation-only reconciliation is `c8e1c7972dca8f8a0c6065815152da8ef72f5989`, with post-main Verify `36664825599` SUCCESS.
 
-Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT`, devflow #188/#105 PARK remains unreleased, and Stage 2/3 are not released by Stage 1 acceptance. Until one of those owning authorities changes, no broader autonomous slice is implied by the accepted controller or Stage 1 state.
+Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT`, devflow #188/#105 PARK remains unreleased, and Stage 2/3 are not released solely by the accepted Stage 1 transport/runtime state. The staged rollout and any later release boundary remain owned by devflow #215/#232.
