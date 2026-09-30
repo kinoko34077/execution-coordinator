@@ -22,8 +22,9 @@
 - `src/execution_coordinator/frontier.py` — read-only composition of trusted discovery, runtime state and claimability projections.
 - `src/execution_coordinator/managed_frontier.py` — deterministic read-only enumeration of normal and reconciliation demand from exact managed-repository Control identities.
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.
-- `src/execution_coordinator/portfolio_metadata.py` ? strict portfolio-v2 companion metadata binding into existing ranking/requirements evidence.
-- `src/execution_coordinator/bootstrap_pickup.py` ? repository-scoped v1 plus portfolio null-target evidence composition and the existing single-selection claim bridge.
+- `src/execution_coordinator/portfolio_metadata.py` — strict portfolio-v2 companion metadata binding into existing ranking/requirements evidence.
+- `src/execution_coordinator/bootstrap_pickup.py` — repository-scoped v1 plus portfolio null-target evidence composition and the existing single-selection claim bridge.
+- `src/execution_coordinator/actions_pickup.py` — trusted Issue-comment `/pickup`/`/release` transport, including optional Stage-1 work-class forwarding and omitted-target portfolio pickup.
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
@@ -58,7 +59,14 @@
 
 ## Portfolio-scope broad pickup v2
 
-- Issue #85 ? accepted devflow #208 / PR #220 runtime consumer: strict companion metadata validation, binding to current v1 candidate body digest + fingerprint, existing ranking hard-filter reuse, exact requirement projection, null-target managed-portfolio evidence composition, and one-selection/no-fallthrough claim integration. Repository-scoped v1 remains compatible; recovery stays separate.
+- Issue #85 — accepted devflow #208 / PR #220 runtime consumer: strict companion metadata validation, binding to current v1 candidate body digest + fingerprint, existing ranking hard-filter reuse, exact requirement projection, null-target managed-portfolio evidence composition, and one-selection/no-fallthrough claim integration. Repository-scoped v1 remains compatible; recovery stays separate.
+
+## Stage 1 work-class and Issue-comment pickup transport
+
+- Issue #89 / PR #90 — accepted Stage-1 work-class runtime propagation and `accepted_work_classes` integration.
+- Issue #94 / PR #95 — accepted Issue-comment `work_class` parsing/forwarding into the existing `run_pickup()` contract; omission preserves legacy unconstrained behavior. Reviewed head `77822567e9c3394e62ecd2acaea6d2f5a7e8aafc`, PR-head Verify `36663015030`, Formal Review v2 `5361037472`, post-main Verify `36663126842`.
+- Issue #97 / PR #98 — accepted Issue-comment portfolio reachability: `target:` is optional for `/pickup`; omission maps to the already-accepted `target_repository=None` path while explicit repository targets remain unchanged. Reviewed head `d115131ba958a69a7f590ad130dc24257a7252af`, exact-head Verify `36664746320`, post-main Verify `36664825599`.
+- Both transport slices are reachability/parsing layers only. Canonical work-class semantics remain in devflow; discovery, ranking, claim/lease and provider authority are unchanged.
 
 ## Phase 4 agent-first autonomous cycle
 
