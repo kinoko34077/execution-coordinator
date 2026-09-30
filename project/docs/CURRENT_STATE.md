@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -24,9 +24,10 @@ Cross-repository authority:
 - Issue #66 / PR #67 own the bounded agent-first one-claim autonomous cycle;
 - Issue #68 owns the provider-independent execution-request / worker-dispatch boundary;
 - Issue #87 / merged PR #88 own the accepted controller-first Actions auto-launch v1 runtime implementation;
+- Issue #89 / merged PR #90 own the accepted Stage 1 work-class runtime propagation;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
-Runtime Issue #3 currently has no active claims. It retains historical generation/idempotency/audit evidence only.
+Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
 
 ## Accepted runtime behavior
 
@@ -351,6 +352,22 @@ A real Claude/OIDC provider E2E remains blocked on explicit Human configuration:
 operational Human Gate, not authority to synthesize or broaden credentials.
 Adoption remains `PILOT`, and devflow #188/#105 PARK is not released solely by
 the no-offer controller pilot.
+
+### Stage 1 work-class runtime propagation
+
+Issue #89 / merged PR #90 implement the accepted devflow #215 Stage 1 contract on current accepted main `54e2a98c59e156b0563f1cc5e8fe0f125558b5cf`.
+
+The accepted runtime boundary:
+- accepts optional closed-vocabulary `work_class` in `DEVFLOW_EXECUTION_PORTFOLIO_METADATA_V1` companion entries;
+- preserves omitted `work_class` as backward-compatible legacy evidence;
+- projects explicit portfolio `work_class` into `chat-worker-bootstrap-evidence.v1` candidates;
+- keeps repository-scoped v1 candidates without explicit metadata unchanged so the devflow classifier applies its accepted conservative role fallback;
+- threads optional `accepted_work_classes` through manual-start `run_pickup()` / CLI into the accepted devflow classifier contract;
+- fails closed on canonical work-class vocabulary drift when the loaded devflow tools expose the vocabulary;
+- preserves existing freshness, capability/environment, ranking, claim, no-fallthrough, provider-launch, and Issue #3 authority boundaries.
+
+Stage 2 audit/triage supply automation and Stage 3 batching/rotation are not released by Stage 1 acceptance. The real Claude/OIDC provider E2E Human Gate and `PILOT` / devflow #188/#105 PARK boundaries remain unchanged.
+
 ### Development Reconciliation demand adoption
 
 Issue #49 / PR #51 consumes the accepted devflow #159 `development-reconciliation-work.v1` projection from the trusted Repository Control.
@@ -477,10 +494,11 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 - devflow MCP remains read-only;
 - repo-monitor remains observer-only;
 - no discovery/publication result, execution claim, or eligibility projection overrides release/deploy/publication/credential/permission/destructive/user-decision confirmation boundaries;
-- #49, #66 and #68 acceptance does not release any scheduler/provider/controller/repo-monitor slice.
+- #49, #66 and #68 acceptance does not release any scheduler/provider/controller/repo-monitor slice;
+- #87/#88 controller-first acceptance and #89/#90 Stage 1 acceptance do not release real provider identity configuration, Stage 2/3, adoption expansion, or devflow #188/#105 PARK.
 
 ## Next action
 
-Issue #49 / PR #51 remains accepted at the implementation layer. Issue #33's two residuals are now resolved: `resume`/lease semantics were confirmed against Protocol v1 without code churn, and the bounded real queue/renew pilot completed with Issue #3 restored to no active claims.
+Controller-first GitHub Actions auto-launch v1 (#87/#88) and Stage 1 work-class runtime propagation (#89/#90) are accepted on current main `54e2a98c59e156b0563f1cc5e8fe0f125558b5cf`.
 
-Phases 0–5 (#58/#60/#62/#64/#66/#68) are accepted. Follow-ups accepted after them: #70 / PR #71 (`70c4a01`) enforces publication/consumption separation (decision 3C) in `run_autonomous_cycle` via a required `AutonomousAttempt`; #72 / PR #73 (`1518cc2`) adds `ActionsMutationGateway`, a real `MutationGateway` over the serialized `mutate-state.yml` lane (failed/cancelled run = rejection; timeout/unknown = fenced, never success), plus the bounded pilot runner `project/pilot/phase7_pilot.py`; PR #74 (`8760b80`) fixes pilot finding F1 (managed-repository duplicate identity now comes from the canonical `[REPO] <name>` Control title, not the shared devflow source repository). The Phase 7 pilot on the real lane passed race, reviewer-independence, 3C and acknowledge-before-work checks and left runtime Issue #3 at `claims: {}` (evidence on #72). Phase 6 provider adapters were not used (dispositioned on #72); Phase 8 controller negotiation is explicitly deferred (devflow#188); the Phase 9 decision keeps adoption mode `PILOT` (devflow#189). Open follow-up: #75 (typed rejection reasons, P3). No further slice is released; resuming requires the conditions recorded on devflow#188/#189.
+Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT`, devflow #188/#105 PARK remains unreleased, and Stage 2/3 are not released by Stage 1 acceptance. Until one of those owning authorities changes, no broader autonomous slice is implied by the accepted controller or Stage 1 state.
