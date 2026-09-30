@@ -29,6 +29,7 @@ class PortfolioRuntimeRead:
     requirements: tuple[CandidateRequirements, ...]
     complete: bool
     metadata_error: str | None = None
+    work_classes: tuple[tuple[str, Role, str], ...] = ()
 
 
 def _section(document: IssueDocument, name: str) -> str:
@@ -151,10 +152,19 @@ def read_portfolio_runtime(
             key=lambda value: (value.requirements.task, value.requirements.role.value),
         )
     )
+    work_classes = tuple(
+        (item.ranking.task, item.ranking.role, item.work_class)
+        for item in sorted(
+            metadata_items,
+            key=lambda value: (value.ranking.task, value.ranking.role.value),
+        )
+        if item.work_class is not None
+    )
     return PortfolioRuntimeRead(
         observed_at=now,
         frontier=frontier,
         ranked=ranked,
         requirements=requirements,
         complete=True,
+        work_classes=work_classes,
     )

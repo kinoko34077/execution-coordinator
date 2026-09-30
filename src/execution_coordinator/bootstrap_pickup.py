@@ -41,6 +41,7 @@ from .discovery import (
 )
 from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
+from .portfolio_metadata import WORK_CLASSES
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
 from .portfolio_runtime import read_portfolio_runtime
 from .ranking import candidate_fingerprint, portable_rank_class_key
@@ -95,6 +96,8 @@ def _candidate_evidence(
     claimability: dict[tuple[str, Role], ClaimabilityReason],
     held_by_worker: set[tuple[str, Role]],
     published: frozenset[tuple[str, Role]],
+    *,
+    work_class: str | None = None,
 ) -> dict[str, Any]:
     key = (candidate.task, candidate.role)
     reason = claimability.get(key)
@@ -102,7 +105,7 @@ def _candidate_evidence(
         task == candidate.task and role in (Role.IMPLEMENTER, Role.RECOVERY)
         for task, role in held_by_worker
     )
-    return {
+    item = {
         "task_ref": candidate.task,
         "role": candidate.role.value,
         "action": _ROLE_ACTION[candidate.role],
@@ -123,6 +126,9 @@ def _candidate_evidence(
         "required_capabilities": [],
         "required_environment": [],
     }
+    if work_class is not None:
+        item["work_class"] = work_class
+    return item
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,13 +242,23 @@ def gather_evidence(
         requirements_by_key = {
             (item.task, item.role): item for item in runtime.requirements
         }
+        work_class_by_key = {
+            (task, role): work_class
+            for task, role, work_class in runtime.work_classes
+        }
         for candidate in candidates:
             if candidate.role not in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY):
                 continue
             key = (candidate.task, candidate.role)
             if candidate.role is not Role.RECOVERY and key not in ranked_by_key:
                 continue
-            item = _candidate_evidence(candidate, claimability, held, inputs.published)
+            item = _candidate_evidence(
+                candidate,
+                claimability,
+                held,
+                inputs.published,
+                work_class=work_class_by_key.get(key),
+            )
             if candidate.role is not Role.RECOVERY:
                 ranked_item = ranked_by_key[key]
                 requirements = requirements_by_key[key]
@@ -327,6 +343,7 @@ def run_pickup(
     target_repository: str | None,
     observation: dict[str, Any],
     work_intent: str | None,
+    accepted_work_classes: tuple[str, ...] | None = None,
     devflow_tools: Any,
     issue_reader: IssueReader,
     state_reader: StateReader,
@@ -343,9 +360,16 @@ def run_pickup(
     in devflow.  Without ``gateway_factory`` the cycle is read-only.
     """
 
+    devflow_work_classes = getattr(devflow_tools.chat_worker_bootstrap, "WORK_CLASSES", None)
+    if devflow_work_classes is not None and frozenset(devflow_work_classes) != WORK_CLASSES:
+        raise RuntimeError("work-class contract mismatch between execution-coordinator and devflow")
+
     request = devflow_tools.chat_worker_profile.build_request(
         observation, target_repository=target_repository, work_intent=work_intent, now=now
     )
+    if accepted_work_classes is not None:
+        request["accepted_work_classes"] = list(accepted_work_classes)
+        request = devflow_tools.chat_worker_bootstrap.normalize_request(request)
     worker_id = f"{request['worker_system']}:{request['worker_session_id']}"
     evidence, candidates = gather_evidence(
         GatherInputs(
@@ -479,6 +503,7 @@ def main(argv: list[str] | None = None) -> int:
     pick.add_argument("--devflow", required=True, help="path to a devflow checkout (contract tools)")
     pick.add_argument("--session-file", default=".chat-worker-session.json")
     pick.add_argument("--intent", default=None, help="the user's broad instruction (audit only)")
+    pick.add_argument("--work-class", dest="accepted_work_classes", action="append", default=None, help="accepted Stage-1 work class; repeat to accept multiple classes")
     pick.add_argument("--repository-checkout", action="store_true", help="a target working tree is present")
     pick.add_argument("--execute", action="store_true", help="claim + acknowledge a work disposition")
     rel = sub.add_parser("release", help="release a claim obtained by pickup --execute")
@@ -513,20 +538,25 @@ def main(argv: list[str] | None = None) -> int:
         "probes": probes,
     }
     reader = GitHubIssueReader(token=token)
-    outcome = run_pickup(
-        target_repository=args.target,
-        observation=observation,
-        work_intent=args.intent,
-        devflow_tools=tools,
-        issue_reader=reader,
-        state_reader=state,
-        control_documents=list_control_documents(token, reader) if agents else (),
-        agents_md_read=agents,
-        now=now,
-        gateway_factory=(lambda: ActionsMutationGateway(token=token, repository=ec, state_reader=state.load_body))
-        if args.execute
-        else None,
-    )
+    try:
+        outcome = run_pickup(
+            target_repository=args.target,
+            observation=observation,
+            work_intent=args.intent,
+            accepted_work_classes=tuple(args.accepted_work_classes) if args.accepted_work_classes is not None else None,
+            devflow_tools=tools,
+            issue_reader=reader,
+            state_reader=state,
+            control_documents=list_control_documents(token, reader) if agents else (),
+            agents_md_read=agents,
+            now=now,
+            gateway_factory=(lambda: ActionsMutationGateway(token=token, repository=ec, state_reader=state.load_body))
+            if args.execute
+            else None,
+        )
+    except tools.chat_worker_bootstrap.ContractError as exc:
+        detail = getattr(exc, "detail", str(exc))
+        parser.error(f"pickup request rejected: {detail}")
     live = outcome.get("session")
     print(
         json.dumps(
