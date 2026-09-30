@@ -2,7 +2,7 @@
 
 ## Current operational state
 
-- `CURRENT_STATE.md` — accepted v0.1 runtime behavior, merged-main verification, operational smoke evidence, known limitations and next action.
+- `CURRENT_STATE.md` — accepted v0.1 runtime behavior, merged-main verification, operational smoke evidence, accepted chat-pickup transport, known limitations and next action.
 
 ## Implementation plan
 
@@ -22,15 +22,18 @@
 - `src/execution_coordinator/frontier.py` — read-only composition of trusted discovery, runtime state and claimability projections.
 - `src/execution_coordinator/managed_frontier.py` — deterministic read-only enumeration of normal and reconciliation demand from exact managed-repository Control identities.
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.
-- `src/execution_coordinator/portfolio_metadata.py` ? strict portfolio-v2 companion metadata binding into existing ranking/requirements evidence.
-- `src/execution_coordinator/bootstrap_pickup.py` ? repository-scoped v1 plus portfolio null-target evidence composition and the existing single-selection claim bridge.
+- `src/execution_coordinator/portfolio_metadata.py` — strict portfolio-v2 companion metadata binding into existing ranking/requirements evidence.
+- `src/execution_coordinator/bootstrap_pickup.py` — repository-scoped v1 plus portfolio null-target evidence composition and the existing single-selection claim bridge.
+- `src/execution_coordinator/actions_pickup.py` — trusted Issue-comment `/pickup`/`/release` transport; optional `work_class` forwarding and optional `target` for portfolio scope.
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
+- `.github/workflows/chat-pickup.yml` — trusted Issue-comment transport into the accepted pickup runtime; authority remains in devflow classification plus Issue #3 mutation lane.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
 - Issue #3 `[SYSTEM] Execution Coordination State` — live runtime current-state snapshot.
+- Issue #83 `[PICKUP] Chat worker requests` — operational command surface and accepted chat-pickup grammar.
 
 ## Accepted v0.1 surfaces
 
@@ -58,7 +61,14 @@
 
 ## Portfolio-scope broad pickup v2
 
-- Issue #85 ? accepted devflow #208 / PR #220 runtime consumer: strict companion metadata validation, binding to current v1 candidate body digest + fingerprint, existing ranking hard-filter reuse, exact requirement projection, null-target managed-portfolio evidence composition, and one-selection/no-fallthrough claim integration. Repository-scoped v1 remains compatible; recovery stays separate.
+- Issue #85 — accepted devflow #208 / PR #220 runtime consumer: strict companion metadata validation, binding to current v1 candidate body digest + fingerprint, existing ranking hard-filter reuse, exact requirement projection, null-target managed-portfolio evidence composition, and one-selection/no-fallthrough claim integration. Repository-scoped v1 remains compatible; recovery stays separate.
+
+## Stage 1 work-class and chat transport
+
+- Issue #89 / merged PR #90 — accepted Stage 1 runtime propagation of portfolio `work_class` and optional `accepted_work_classes` filtering while preserving legacy fallback behavior.
+- Issue #94 / merged PR #95 — accepted Issue-comment transport parity: optional comma-separated `work_class` reaches the existing `accepted_work_classes` contract; omission preserves legacy unconstrained behavior; devflow remains canonical vocabulary/semantic authority.
+- Issue #97 / merged PR #98 — accepted Issue-comment portfolio reachability: `/pickup target:` is optional; omission maps to `target_repository=None`, while explicit repository targets and `/release` remain unchanged.
+- Accepted main after PR #98: `c8e1c7972dca8f8a0c6065815152da8ef72f5989`; post-main Verify `36664825599` SUCCESS.
 
 ## Phase 4 agent-first autonomous cycle
 
