@@ -9,7 +9,7 @@ worker's capabilities stay the worker's own declaration.
 Command grammar (one ``key: value`` per line after the command line)::
 
     /pickup
-    target: owner/repo                  (required)
+    target: owner/repo                  (optional; omitted means portfolio scope)
     worker_system: codex|claude|chatgpt (required)
     session: <worker_session_id>        (optional; generated when absent)
     cycle: <N>                          (optional; default 1)
@@ -83,7 +83,7 @@ def parse_command(body: str) -> tuple[str, dict[str, str]] | None:
         if key != "intent" and _SECRET.search(value):
             raise CommandRejected("COMMAND_MALFORMED", f"{key} must not carry secret material")
         fields[key] = value
-    missing = {"target", "worker_system"} - set(fields) if command == "pickup" else RELEASE_KEYS - set(fields)
+    missing = {"worker_system"} - set(fields) if command == "pickup" else RELEASE_KEYS - set(fields)
     if missing:
         raise CommandRejected("COMMAND_MALFORMED", f"missing keys: {sorted(missing)}")
     return command, fields
@@ -185,7 +185,7 @@ def handle(
             return {"status": "RELEASED", "claim_id": fields["claim_id"], "generation": generation}
         observation = build_observation(fields, devflow_tools.chat_worker_profile, now)
         outcome = run_pickup_fn(
-            target_repository=fields["target"],
+            target_repository=fields.get("target"),
             observation=observation,
             work_intent=fields.get("intent"),
             accepted_work_classes=_accepted_work_classes(fields),
