@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + MANUAL PICKUP EXPIRY SELF-HEAL + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -27,6 +27,7 @@ Cross-repository authority:
 - Issue #89 / merged PR #90 own the accepted Stage 1 work-class runtime propagation;
 - Issue #94 / merged PR #95 own accepted Issue-comment work-class transport parity;
 - Issue #97 / merged PR #98 own accepted Issue-comment reachability for the portfolio/null-target pickup path;
+- Issue #101 / merged PR #102 own accepted executable manual-pickup expired-claim self-heal using the existing serialized `expire` authority;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
@@ -278,6 +279,34 @@ bootstrap accepts omitted `--target` for portfolio scope. The accepted Issue-com
 controller negotiation, work stealing, daemon scheduler or second assignment
 authority is introduced.
 
+### Manual pickup expired-claim self-heal
+
+Issue #101 / merged PR #102 close the availability gap where a lease-expired
+claim could remain `EXPIRED_UNSWEPT` and block a conflicting manual pickup until
+an unrelated scheduled controller maintenance run eventually executed.
+
+For executable pickup only (`gateway_factory` present), `run_pickup()` now reads
+current runtime authority before evidence classification. If at least one claim
+has `lease_until <= now`, it dispatches the already-accepted globally serialized
+`expire` mutation with the current execution-attempt idempotency key. Only after
+that mutation returns does normal evidence gathering run, so claimability is
+re-read from the committed post-sweep snapshot.
+
+Boundaries remain unchanged:
+- a state with no expired claim dispatches no extra expiry mutation;
+- live claims are never expired early; the existing server-side `expire` operation remains final authority;
+- read-only pickup without a mutation gateway remains GET-only;
+- expiry transport/commit failure propagates before classification and fails closed;
+- lease duration, conflict semantics, release semantics, provider routing and durable task authority are unchanged.
+
+Accepted evidence:
+- RED head `0157c78a460bbfff79d8e858521a75653c94a2e5` / Verify `36791474092`;
+- GREEN exact PR head `e105efddaa26e9c58c5dcfbfecca49c488a2cedb` / Verify `36791560180`;
+- Formal Review `5373163544`, blocking findings none;
+- squash merge `9a7b7bf0e06a2d830d8ad1bef229e17d8290c0b1`;
+- post-main Verify `36791704211` SUCCESS;
+- merged-main pickup smoke dispatched expire run `36791763888` SUCCESS, removed the expired devflow#211 claim while preserving the live #101 claim, then classified the re-read state as `NO_CANDIDATES_PUBLISHED`;
+- #101 release mutation `36791826011` SUCCESS; final runtime Issue #3 readback returned `claims: {}`.
 ### Agent-first bounded autonomous cycle
 
 Issue #66 provides the bounded `run_autonomous_cycle()` execution boundary
