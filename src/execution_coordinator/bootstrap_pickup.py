@@ -338,6 +338,34 @@ def list_control_documents(token: str, reader: IssueReader) -> tuple[IssueDocume
     return tuple(reader.read_issue(DEVFLOW, number) for number in numbers)
 
 
+def _expire_stale_before_pickup(
+    *,
+    state_reader: StateReader,
+    gateway_factory: Callable[[], MutationGateway] | None,
+    now: datetime,
+    attempt_id: str,
+) -> bool:
+    """Expire lease-stale runtime claims before an executable pickup read.
+
+    Read-only discovery remains mutation-free when no gateway is supplied.
+    Executable pickup first checks the current authoritative snapshot and
+    dispatches the existing serialized expire mutation only when at least
+    one claim is already lease-expired. The caller then performs its normal
+    evidence gather, which re-reads runtime state after the mutation commits.
+    """
+
+    if gateway_factory is None:
+        return False
+    state = get_state_result(state_reader).state
+    if not any(claim.lease_until <= now for claim in state.claims.values()):
+        return False
+    gateway_factory().mutate(
+        operation="expire",
+        payload={},
+        idempotency_key=f"{attempt_id}:expire",
+    )
+    return True
+
 def run_pickup(
     *,
     target_repository: str | None,
@@ -370,6 +398,13 @@ def run_pickup(
     if accepted_work_classes is not None:
         request["accepted_work_classes"] = list(accepted_work_classes)
         request = devflow_tools.chat_worker_bootstrap.normalize_request(request)
+    attempt = request["execution_attempt_id"]
+    _expire_stale_before_pickup(
+        state_reader=state_reader,
+        gateway_factory=gateway_factory,
+        now=now,
+        attempt_id=attempt,
+    )
     worker_id = f"{request['worker_system']}:{request['worker_session_id']}"
     evidence, candidates = gather_evidence(
         GatherInputs(
@@ -387,7 +422,6 @@ def run_pickup(
     devflow_tools.chat_worker_bootstrap.validate_result(result)
     outcome: dict[str, Any] = {"request": request, "evidence": evidence, "result": result, "claim_id": None}
     if gateway_factory is not None and result["claim_required"]:
-        attempt = request["execution_attempt_id"]
         session = execute_selection(
             result,
             candidates,
