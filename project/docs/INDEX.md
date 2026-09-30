@@ -66,7 +66,8 @@
 - Issue #89 / PR #90 — accepted Stage-1 work-class runtime propagation and `accepted_work_classes` integration.
 - Issue #94 / PR #95 — accepted Issue-comment `work_class` parsing/forwarding into the existing `run_pickup()` contract; omission preserves legacy unconstrained behavior. Reviewed head `77822567e9c3394e62ecd2acaea6d2f5a7e8aafc`, PR-head Verify `36663015030`, Formal Review v2 `5361037472`, post-main Verify `36663126842`.
 - Issue #97 / PR #98 — accepted Issue-comment portfolio reachability: `target:` is optional for `/pickup`; omission maps to the already-accepted `target_repository=None` path while explicit repository targets remain unchanged. Reviewed head `d115131ba958a69a7f590ad130dc24257a7252af`, exact-head Verify `36664746320`, post-main Verify `36664825599`.
-- Both transport slices are reachability/parsing layers only. Canonical work-class semantics remain in devflow; discovery, ranking, claim/lease and provider authority are unchanged.
+- Issue #101 / PR #102 — accepted executable manual-pickup expired-claim self-heal: when current runtime evidence contains a lease-expired claim, executable pickup invokes the existing serialized `expire` authority before gathering/classifying fresh evidence; live/no-expired and read-only paths do not add an expiry mutation. Reviewed head `e105efddaa26e9c58c5dcfbfecca49c488a2cedb`, exact-head Verify `36791560180`, merge `9a7b7bf0e06a2d830d8ad1bef229e17d8290c0b1`, post-main Verify `36791704211`, merged-main expire smoke `36791763888`, clean release `36791826011`.
+- These transport/availability slices do not create a second scheduler or authority. Canonical work-class semantics remain in devflow; claim/lease/conflict authority remains the existing serialized execution-coordinator state machine.
 
 ## Phase 4 agent-first autonomous cycle
 
