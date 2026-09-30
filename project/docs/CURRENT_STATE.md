@@ -307,6 +307,7 @@ Accepted evidence:
 - post-main Verify `36791704211` SUCCESS;
 - merged-main pickup smoke dispatched expire run `36791763888` SUCCESS, removed the expired devflow#211 claim while preserving the live #101 claim, then classified the re-read state as `NO_CANDIDATES_PUBLISHED`;
 - #101 release mutation `36791826011` SUCCESS; final runtime Issue #3 readback returned `claims: {}`.
+
 ### Agent-first bounded autonomous cycle
 
 Issue #66 provides the bounded `run_autonomous_cycle()` execution boundary
