@@ -16,6 +16,8 @@ Command grammar (one ``key: value`` per line after the command line)::
     capabilities: python, tests         (optional; exact tags)
     environment: linux                  (optional; exact tags)
     work_class: audit, triage           (optional; accepted Stage-1 classes)
+    reviewer_system: <Review System>     (optional pair; direct Review Provenance)
+    reviewer_model: <Review Model>       (optional pair; direct Review Provenance)
     intent: <the user's words>          (optional; audit only)
 
     /release
@@ -35,7 +37,18 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 TRUSTED = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
-PICKUP_KEYS = frozenset({"target", "worker_system", "session", "cycle", "capabilities", "environment", "work_class", "intent"})
+PICKUP_KEYS = frozenset({
+    "target",
+    "worker_system",
+    "session",
+    "cycle",
+    "capabilities",
+    "environment",
+    "work_class",
+    "reviewer_system",
+    "reviewer_model",
+    "intent",
+})
 RELEASE_KEYS = frozenset({"session", "claim_id", "generation"})
 # Surfaces supplied by the Actions transport itself.  They describe the
 # transport path, never the worker's capabilities.
@@ -121,7 +134,16 @@ def build_observation(fields: dict[str, str], profile_tools: Any, now: datetime)
         cycle = int(fields.get("cycle", "1"))
     except ValueError as exc:
         raise CommandRejected("COMMAND_MALFORMED", "cycle must be an integer") from exc
-    return {
+
+    reviewer_system = fields.get("reviewer_system")
+    reviewer_model = fields.get("reviewer_model")
+    if (reviewer_system is None) != (reviewer_model is None):
+        raise CommandRejected(
+            "COMMAND_MALFORMED",
+            "reviewer_system and reviewer_model must be supplied together",
+        )
+
+    observation = {
         "schema_version": profile_tools.OBSERVATION_SCHEMA,
         "worker_system": system,
         "worker_session_id": session,
@@ -129,6 +151,12 @@ def build_observation(fields: dict[str, str], profile_tools: Any, now: datetime)
         "observed_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
         "probes": declared_probes(fields, profile_tools),
     }
+    if reviewer_system is not None:
+        observation["review_provenance"] = {
+            "system": reviewer_system,
+            "model": reviewer_model,
+        }
+    return observation
 
 
 def _accepted_work_classes(fields: dict[str, str]) -> tuple[str, ...] | None:
