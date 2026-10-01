@@ -47,9 +47,21 @@ class _Factory:
         return self.transport
 
 
-def _codex_request(*, resume_thread_id: str | None = None):
+def _codex_request(
+    *,
+    resume_thread_id: str | None = None,
+    cwd: str | None = "/work",
+    codex_sandbox: str | None = "read-only",
+    codex_approval_policy: str | None = "never",
+):
     request = _request()
-    parameters = [("cwd", "/work"), ("mode", "bounded"), ("model", "gpt-test")]
+    parameters = [("mode", "bounded"), ("model", "gpt-test")]
+    if cwd is not None:
+        parameters.append(("cwd", cwd))
+    if codex_sandbox is not None:
+        parameters.append(("codex_sandbox", codex_sandbox))
+    if codex_approval_policy is not None:
+        parameters.append(("codex_approval_policy", codex_approval_policy))
     if resume_thread_id is not None:
         parameters.append(("resume_thread_id", resume_thread_id))
     return replace(
@@ -87,6 +99,10 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             [message.get("method") for message in factory.transport.sent],
         )
         self.assertNotIn("turn/start", [message.get("method") for message in factory.transport.sent])
+        thread_start = factory.transport.sent[-1]
+        self.assertEqual("/work", thread_start["params"]["cwd"])
+        self.assertEqual("read-only", thread_start["params"]["sandbox"])
+        self.assertEqual("never", thread_start["params"]["approvalPolicy"])
         command_text = " ".join(factory.commands[0])
         self.assertIn('env_key="ACCESS_TOKEN"', command_text)
         self.assertIn(
@@ -111,6 +127,26 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         self.assertEqual(["initialize", "initialized", "thread/resume"], methods)
         resume = factory.transport.sent[-1]
         self.assertEqual("thread-saved", resume["params"]["threadId"])
+        self.assertEqual("/work", resume["params"]["cwd"])
+        self.assertEqual("read-only", resume["params"]["sandbox"])
+        self.assertEqual("never", resume["params"]["approvalPolicy"])
+
+    def test_runtime_policy_is_explicit_and_fails_closed_before_process_start(self) -> None:
+        for request, reason in (
+            (_codex_request(cwd=None), "cwd"),
+            (_codex_request(codex_sandbox=None), "codex_sandbox"),
+            (_codex_request(codex_approval_policy=None), "codex_approval_policy"),
+            (_codex_request(codex_sandbox="danger-full-access"), "codex_sandbox"),
+            (_codex_request(codex_approval_policy="on-request"), "codex_approval_policy"),
+        ):
+            with self.subTest(reason=reason):
+                factory = _Factory([])
+                adapter = CodexAppServerAdapter(transport_factory=factory)
+                with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+                    outcome = adapter.start(request)
+                self.assertEqual(LaunchStatus.FAILED, outcome.launch_status)
+                self.assertIn(reason, outcome.reason)
+                self.assertEqual([], factory.commands)
 
     def test_thread_start_eof_is_ambiguous_and_never_retried(self) -> None:
         factory = _Factory([
@@ -184,6 +220,40 @@ class CodexAppServerAdapterTests(unittest.TestCase):
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
+
+    def test_transport_loss_after_turn_start_is_ambiguous(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "result": {"turn": {"id": "turn-1"}}},
+            OSError("transport lost"),
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertIn("transport lost", result.reason)
+        self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
+
+    def test_terminal_notification_before_turn_start_response_is_preserved(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {
+                "method": "turn/completed",
+                "params": {"turn": {"id": "turn-1", "status": "completed"}},
+            },
+            {"id": 3, "result": {"turn": {"id": "turn-1"}}},
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+
+        self.assertEqual(CodexTurnStatus.COMPLETED, result.status)
+        self.assertEqual("turn-1", result.turn_id)
 
     def test_ambiguous_turn_poison_session_until_reconciliation(self) -> None:
         factory = _Factory([
