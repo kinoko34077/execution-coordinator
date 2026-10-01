@@ -30,6 +30,8 @@ CODEX_APP_SERVER_COMMAND = (
     "model_providers.openai_chatgpt_plan.requires_openai_auth=false",
     "-c",
     "model_providers.openai_chatgpt_plan.supports_websockets=false",
+    "-c",
+    "shell_environment_policy.ignore_default_excludes=false",
 )
 
 
@@ -149,6 +151,7 @@ class _LiveSession:
     context: CodexProviderContext
     next_request_id: int
     active_turn_id: str | None = None
+    reconciliation_required: bool = False
 
 
 def _require_nonempty(value: object, field: str) -> str:
@@ -385,6 +388,10 @@ class CodexAppServerAdapter:
             raise KeyError("unknown Codex app-server session")
         if session.active_turn_id is not None:
             raise RuntimeError("Codex app-server session already has an active turn")
+        if session.reconciliation_required:
+            raise RuntimeError(
+                "Codex app-server session requires external reconciliation before reuse"
+            )
 
         rpc_id = session.next_request_id
         session.next_request_id += 1
@@ -410,6 +417,7 @@ class CodexAppServerAdapter:
                 reason=str(exc),
             )
         except (OSError, EOFError) as exc:
+            session.reconciliation_required = True
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=None,
@@ -421,6 +429,7 @@ class CodexAppServerAdapter:
             while True:
                 message = session.transport.receive()
                 if message is None:
+                    session.reconciliation_required = True
                     return CodexTurnResult(
                         thread_id=session.context.thread_id,
                         turn_id=turn_id,
@@ -463,6 +472,17 @@ class CodexAppServerAdapter:
                     status=status,
                     reason=None if status is CodexTurnStatus.COMPLETED else status.value,
                 )
+        except CodexAppServerProtocolError:
+            session.reconciliation_required = True
+            raise
+        except OSError as exc:
+            session.reconciliation_required = True
+            return CodexTurnResult(
+                thread_id=session.context.thread_id,
+                turn_id=turn_id,
+                status=CodexTurnStatus.AMBIGUOUS,
+                reason=str(exc) or type(exc).__name__,
+            )
         finally:
             session.active_turn_id = None
 
