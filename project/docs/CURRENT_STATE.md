@@ -2,7 +2,7 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + MANUAL PICKUP EXPIRY SELF-HEAL + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + MANUAL PICKUP EXPIRY SELF-HEAL + REVIEWER PROVENANCE PICKUP ELIGIBILITY + PROVIDER-INDEPENDENT REQUEST BOUNDARY / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
@@ -15,6 +15,7 @@ Cross-repository authority:
 - devflow Issues #155/#159 own the accepted Development Reconciliation Loop and `development-reconciliation-work.v1` publication contract;
 - devflow #208 / merged PR #220 own the accepted portfolio-scope broad-pickup v2 companion-metadata and null-target classification contract;
 - devflow #223 owns the accepted controller-first GitHub Actions auto-launch v1 design/plan;
+- devflow #211 / merged PR #284 own the accepted reviewer-provenance pickup-eligibility contract;
 - devflow Repository Control #107 is the cross-repository summary/index for this repository;
 - Issue #28 / PR #32 own trusted Repository Control durable-candidate discovery/normalization;
 - Issue #44 / PR #45 own the additive runtime claimability-reason projection;
@@ -28,6 +29,7 @@ Cross-repository authority:
 - Issue #94 / merged PR #95 own accepted Issue-comment work-class transport parity;
 - Issue #97 / merged PR #98 own accepted Issue-comment reachability for the portfolio/null-target pickup path;
 - Issue #101 / merged PR #102 own accepted executable manual-pickup expired-claim self-heal using the existing serialized `expire` authority;
+- Issue #105 / merged PR #106 own accepted end-to-end reviewer-provenance propagation through repository and portfolio pickup;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
@@ -308,6 +310,29 @@ Accepted evidence:
 - merged-main pickup smoke dispatched expire run `36791763888` SUCCESS, removed the expired devflow#211 claim while preserving the live #101 claim, then classified the re-read state as `NO_CANDIDATES_PUBLISHED`;
 - #101 release mutation `36791826011` SUCCESS; final runtime Issue #3 readback returned `claims: {}`.
 
+### Reviewer-provenance pickup eligibility
+
+Issue #105 / merged PR #106 implement the accepted devflow #211 reviewer-provenance eligibility contract through the real execution-coordinator pickup runtime.
+
+The accepted runtime boundary:
+- accepts optional direct pickup `review_provenance: {system, model}` evidence and never infers it from `worker_system`, provider name, GitHub actor, or runtime session identity;
+- projects candidate `different_reviewer_requirement: {implementer_system, implementer_model}` only from accepted structured repository/portfolio evidence;
+- preserves ordinary reviewer pickup behavior when no explicit different-reviewer requirement exists;
+- fails closed when an explicit different-reviewer candidate has missing, malformed, or ambiguous reviewer provenance;
+- omits a same-signature reviewer as `REVIEWER_INDEPENDENCE_CONFLICT`;
+- keeps a differing accepted reviewer signature eligible when every other gate passes;
+- keeps exact-head submitted Review freshness in devflow merge/readiness authority rather than treating pickup eligibility as proof that Review completion occurred.
+
+Accepted evidence:
+- pre-fix live cycle 5 reproduced the unsupported direct field as `REQUEST_INVALID`; no claim formed;
+- RED head `0f951723eeee173e4691bc5438d1f7ab595891b8` / Verify `36798849087` failed only on the new #105 expectations;
+- GREEN reviewed head `ecedded0d7b9933b1ea79688e7092bb782b63d66` / exact-head Verify `36799188340` SUCCESS;
+- Formal Review `5373746812`, blocking findings none;
+- expected-head squash merge -> `3437f6fa3abe991d89d1168372cc10b4f4c73036`; post-main Verify `36799401103` SUCCESS;
+- canary cycle 6: missing direct signature -> `NEEDS_EVIDENCE / EVIDENCE_INVALID`, no claim;
+- canary cycle 7: same `ChatGPT / GPT-5.6 Sol` signature -> `REVIEWER_INDEPENDENCE_CONFLICT`, no claim;
+- canary cycle 8: direct `Human / unknown` signature -> `REVIEW_WORK / ELIGIBLE_REVIEW_DEMAND`, reviewer claim formed and acknowledged;
+- serialized release `36799961806` succeeded; final runtime Issue #3 readback returned `claims: {}`.
 ### Agent-first bounded autonomous cycle
 
 Issue #66 provides the bounded `run_autonomous_cycle()` execution boundary
@@ -506,7 +531,8 @@ Implementation/review evidence:
 
 - `worker_id` is runtime coordination metadata, not cryptographic identity or a GitHub security principal;
 - reviewer worker-separation checks prevent one runtime worker from carrying implementer/recovery execution authority and independent reviewer authority for the same task;
-- formal code-review provenance remains a separate devflow Review Provenance v2 concern;
+- direct reviewer provenance used by #105 is explicit eligibility evidence and is not inferred from runtime transport identity;
+- formal code-review provenance and exact-head Review freshness remain separate devflow Review Provenance v2 / merge-readiness concerns;
 - multiple agent surfaces may share one GitHub actor, so GitHub actor identity alone is not proof of reviewer independence.
 
 ## Known limitations / deferred protocol surface
@@ -536,10 +562,11 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 - repo-monitor remains observer-only;
 - no discovery/publication result, execution claim, or eligibility projection overrides release/deploy/publication/credential/permission/destructive/user-decision confirmation boundaries;
 - #49, #66 and #68 acceptance does not release any scheduler/provider/controller/repo-monitor slice;
-- #87/#88 controller-first acceptance, #89/#90 Stage 1 runtime acceptance, and #94/#95/#97/#98 transport acceptance do not release real provider identity configuration, Stage 2/3, adoption expansion, or devflow #188/#105 PARK.
+- #87/#88 controller-first acceptance, #89/#90 Stage 1 runtime acceptance, #94/#95/#97/#98 transport acceptance, and #105/#106 reviewer-provenance acceptance do not release real provider identity configuration, adoption expansion, or devflow #188/#105 PARK;
+- devflow Stage 2 is released under #215/#232, with S2.2–S2.5 accepted on devflow main and S2.6 real read-only pilot first unfinished; Stage 3 remains unreleased until S2.8 acceptance.
 
 ## Next action
 
-Controller-first GitHub Actions auto-launch v1 (#87/#88), Stage 1 work-class runtime propagation (#89/#90), Issue-comment work-class transport (#94/#95), and Issue-comment portfolio reachability (#97/#98) are accepted. The moving accepted-main SHA remains owned by devflow Control #107 rather than this document.
+Controller-first GitHub Actions auto-launch v1 (#87/#88), Stage 1 work-class runtime propagation (#89/#90), Issue-comment pickup transport (#94/#95/#97/#98), manual expiry self-heal (#101/#102), and reviewer-provenance pickup eligibility (#105/#106) are accepted. The moving accepted-main SHA remains owned by devflow Control #107 rather than this document.
 
-Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT`, devflow #188/#105 PARK remains unreleased, and Stage 2/3 are not released by transport acceptance alone. Further staged rollout is governed by devflow #215/#232.
+Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT` and devflow #188/#105 PARK remains unreleased. Devflow Stage 2 is released with S2.6 as the first unfinished pilot; Stage 3 remains unreleased until S2.8. Provider-adapter continuation under devflow #250 is a separate Human/security-gated path.

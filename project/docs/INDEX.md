@@ -69,6 +69,13 @@
 - Issue #101 / PR #102 — accepted executable manual-pickup expired-claim self-heal: when current runtime evidence contains a lease-expired claim, executable pickup invokes the existing serialized `expire` authority before gathering/classifying fresh evidence; live/no-expired and read-only paths do not add an expiry mutation. Reviewed head `e105efddaa26e9c58c5dcfbfecca49c488a2cedb`, exact-head Verify `36791560180`, merge `9a7b7bf0e06a2d830d8ad1bef229e17d8290c0b1`, post-main Verify `36791704211`, merged-main expire smoke `36791763888`, clean release `36791826011`.
 - These transport/availability slices do not create a second scheduler or authority. Canonical work-class semantics remain in devflow; claim/lease/conflict authority remains the existing serialized execution-coordinator state machine.
 
+## Reviewer-provenance pickup eligibility
+
+- Issue #105 / PR #106 — accepted end-to-end propagation of direct `review_provenance` and candidate `different_reviewer_requirement` through repository- and portfolio-scope pickup.
+- Explicit different-reviewer demand fails closed on missing/malformed provenance, rejects the same normalized reviewer/implementer signature as `REVIEWER_INDEPENDENCE_CONFLICT`, and keeps a differing accepted signature eligible when all other gates pass.
+- Runtime transport identity (`worker_system`, session, provider or GitHub actor) does not substitute for Review Provenance identity; exact-head submitted Review freshness remains a devflow merge/readiness concern.
+- Accepted evidence: reviewed head `ecedded0d7b9933b1ea79688e7092bb782b63d66`, exact-head Verify `36799188340`, Formal Review `5373746812`, merge `3437f6fa3abe991d89d1168372cc10b4f4c73036`, post-main Verify `36799401103`, missing/same/different canary cycles 6–8, release mutation `36799961806`, final runtime `claims: {}`.
+
 ## Phase 4 agent-first autonomous cycle
 
 - Issue #66 — bounded `run_autonomous_cycle()` boundary over one already refreshed `CapabilityMatchResult`: first eligible match only, one claim attempt, no fallback after rejection, acknowledge-before-work, and existing `AgentSession` release/fencing. No refresh, scheduler, provider/controller, repo-monitor or second authority.
@@ -86,6 +93,7 @@
 
 - devflow Work Order `#105` — parent multi-agent execution coordination objective and later-phase authority.
 - devflow protocol/spec Issue `#106` / merged PR `#108` — accepted Protocol v1 authority on devflow main `c0d44e809a835f30263d87fdb2baa62ecddfd4bd`.
+- devflow Issue `#211` / merged PR `#284` — accepted reviewer-provenance pickup-eligibility contract consumed by local #105 / PR #106.
 - devflow Repository Control `#107` — cross-repository index for this repository.
 
 ## Repository role
