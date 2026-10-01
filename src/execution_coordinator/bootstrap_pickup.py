@@ -41,7 +41,12 @@ from .discovery import (
 )
 from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
-from .portfolio_metadata import WORK_CLASSES
+from .portfolio_metadata import (
+    DifferentReviewerRequirement,
+    PortfolioMetadataError,
+    WORK_CLASSES,
+    parse_repository_reviewer_requirements,
+)
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
 from .portfolio_runtime import read_portfolio_runtime
 from .ranking import candidate_fingerprint, portable_rank_class_key
@@ -98,6 +103,7 @@ def _candidate_evidence(
     published: frozenset[tuple[str, Role]],
     *,
     work_class: str | None = None,
+    different_reviewer_requirement: DifferentReviewerRequirement | None = None,
 ) -> dict[str, Any]:
     key = (candidate.task, candidate.role)
     reason = claimability.get(key)
@@ -128,6 +134,11 @@ def _candidate_evidence(
     }
     if work_class is not None:
         item["work_class"] = work_class
+    if different_reviewer_requirement is not None:
+        item["different_reviewer_requirement"] = {
+            "implementer_system": different_reviewer_requirement.implementer_system,
+            "implementer_model": different_reviewer_requirement.implementer_model,
+        }
     return item
 
 
@@ -207,10 +218,33 @@ def gather_evidence(
             frontier, worker_id=inputs.worker_id
         )
         candidates = frontier.candidates
+        reviewer_requirement_by_key: dict[
+            tuple[str, Role], DifferentReviewerRequirement
+        ] = {}
+        try:
+            reviewer_requirement_by_key = {
+                (task, role): requirement
+                for task, role, requirement in parse_repository_reviewer_requirements(
+                    document,
+                    candidates=frontier.fresh_candidates,
+                    now=now,
+                )
+            }
+        except PortfolioMetadataError:
+            evidence["frontier"] = {"complete": False, "candidates": []}
+            return evidence, candidates
         evidence["frontier"] = {
             "complete": not frontier.read.discovery.failures,
             "candidates": [
-                _candidate_evidence(candidate, claimability, held, inputs.published)
+                _candidate_evidence(
+                    candidate,
+                    claimability,
+                    held,
+                    inputs.published,
+                    different_reviewer_requirement=reviewer_requirement_by_key.get(
+                        (candidate.task, candidate.role)
+                    ),
+                )
                 for candidate in candidates
                 if candidate.role in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY)
             ],
@@ -246,6 +280,10 @@ def gather_evidence(
             (task, role): work_class
             for task, role, work_class in runtime.work_classes
         }
+        reviewer_requirement_by_key = {
+            (task, role): requirement
+            for task, role, requirement in runtime.reviewer_requirements
+        }
         for candidate in candidates:
             if candidate.role not in (Role.IMPLEMENTER, Role.REVIEWER, Role.RECOVERY):
                 continue
@@ -258,6 +296,7 @@ def gather_evidence(
                 held,
                 inputs.published,
                 work_class=work_class_by_key.get(key),
+                different_reviewer_requirement=reviewer_requirement_by_key.get(key),
             )
             if candidate.role is not Role.RECOVERY:
                 ranked_item = ranked_by_key[key]
@@ -398,6 +437,11 @@ def run_pickup(
     if accepted_work_classes is not None:
         request["accepted_work_classes"] = list(accepted_work_classes)
         request = devflow_tools.chat_worker_bootstrap.normalize_request(request)
+        # devflow normalization returns optional review_provenance=None when
+        # absent. Raw classifier input treats presence as an explicit field,
+        # so preserve optional-field omission rather than re-validating None.
+        if request.get("review_provenance") is None:
+            request.pop("review_provenance", None)
     attempt = request["execution_attempt_id"]
     _expire_stale_before_pickup(
         state_reader=state_reader,
@@ -538,6 +582,8 @@ def main(argv: list[str] | None = None) -> int:
     pick.add_argument("--session-file", default=".chat-worker-session.json")
     pick.add_argument("--intent", default=None, help="the user's broad instruction (audit only)")
     pick.add_argument("--work-class", dest="accepted_work_classes", action="append", default=None, help="accepted Stage-1 work class; repeat to accept multiple classes")
+    pick.add_argument("--reviewer-system", default=None, help="direct Review Provenance v2 Reviewer-System; must be paired with --reviewer-model")
+    pick.add_argument("--reviewer-model", default=None, help="direct Review Provenance v2 Reviewer-Model; must be paired with --reviewer-system")
     pick.add_argument("--repository-checkout", action="store_true", help="a target working tree is present")
     pick.add_argument("--execute", action="store_true", help="claim + acknowledge a work disposition")
     rel = sub.add_parser("release", help="release a claim obtained by pickup --execute")
@@ -571,6 +617,13 @@ def main(argv: list[str] | None = None) -> int:
         "observed_at": _utc(now),
         "probes": probes,
     }
+    if (args.reviewer_system is None) != (args.reviewer_model is None):
+        parser.error("--reviewer-system and --reviewer-model must be supplied together")
+    if args.reviewer_system is not None:
+        observation["review_provenance"] = {
+            "system": args.reviewer_system,
+            "model": args.reviewer_model,
+        }
     reader = GitHubIssueReader(token=token)
     try:
         outcome = run_pickup(

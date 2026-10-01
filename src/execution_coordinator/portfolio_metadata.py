@@ -27,6 +27,10 @@ _TASK = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$")
 _CONTROL = re.compile(r"^kinoko34077/devflow#[1-9][0-9]*$")
 _REPOSITORY = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 _TAG = re.compile(r"^[a-z0-9][a-z0-9_.:/-]{0,63}$")
+_REVIEW_SECRET_SHAPE = re.compile(
+    r"(ghp_|gho_|ghs_|github_pat_|sk-|bearer|token|password|secret|cookie)",
+    re.IGNORECASE,
+)
 
 WORK_CLASSES = frozenset(
     {"audit", "triage", "sync-check", "quickfix", "implementation", "formal-review"}
@@ -49,11 +53,17 @@ _ENTRY_REQUIRED_FIELDS = frozenset(
         "fresh_until",
     }
 )
-_ENTRY_FIELDS = _ENTRY_REQUIRED_FIELDS | {"work_class"}
+_ENTRY_FIELDS = _ENTRY_REQUIRED_FIELDS | {"work_class", "different_reviewer_requirement"}
 
 
 class PortfolioMetadataError(ValueError):
     """Portfolio companion evidence is absent, malformed, stale, or unbound."""
+
+
+@dataclass(frozen=True, slots=True)
+class DifferentReviewerRequirement:
+    implementer_system: str
+    implementer_model: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -62,6 +72,7 @@ class PortfolioCandidateMetadata:
     requirements: CandidateRequirements
     task_body_sha256: str
     work_class: str | None = None
+    different_reviewer_requirement: DifferentReviewerRequirement | None = None
 
 
 def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
@@ -122,6 +133,44 @@ def _tag_set(value: object, field: str) -> frozenset[str]:
     if any(_TAG.fullmatch(item) is None for item in value):
         raise PortfolioMetadataError(f"{field} contains a malformed tag")
     return frozenset(value)
+
+
+def _review_identity_part(value: object, field: str) -> str:
+    if not isinstance(value, str):
+        raise PortfolioMetadataError(f"{field} must be a string")
+    normalized = " ".join(value.split())
+    if not 0 < len(normalized) <= 128:
+        raise PortfolioMetadataError(f"{field} must be 1..128 normalized characters")
+    if _REVIEW_SECRET_SHAPE.search(normalized):
+        raise PortfolioMetadataError(f"{field} must not carry secret material")
+    return normalized
+
+
+def _different_reviewer_requirement(
+    value: object,
+    *,
+    role: Role,
+) -> DifferentReviewerRequirement:
+    if not isinstance(value, dict):
+        raise PortfolioMetadataError("different_reviewer_requirement must be an object")
+    if set(value) != {"implementer_system", "implementer_model"}:
+        raise PortfolioMetadataError(
+            "different_reviewer_requirement must contain exactly implementer_system and implementer_model"
+        )
+    if role is not Role.REVIEWER:
+        raise PortfolioMetadataError(
+            "different_reviewer_requirement is valid only for reviewer metadata"
+        )
+    return DifferentReviewerRequirement(
+        implementer_system=_review_identity_part(
+            value.get("implementer_system"),
+            "different_reviewer_requirement.implementer_system",
+        ),
+        implementer_model=_review_identity_part(
+            value.get("implementer_model"),
+            "different_reviewer_requirement.implementer_model",
+        ),
+    )
 
 
 def _v1_bindings(control: IssueDocument) -> dict[tuple[str, Role], str]:
@@ -252,6 +301,13 @@ def parse_portfolio_metadata(
         ):
             raise PortfolioMetadataError("work_class is unsupported")
 
+        different_reviewer_requirement = None
+        if "different_reviewer_requirement" in entry:
+            different_reviewer_requirement = _different_reviewer_requirement(
+                entry["different_reviewer_requirement"],
+                role=role,
+            )
+
         urgency = entry["controller_urgency"]
         if urgency is not None and (type(urgency) is not int or not 0 <= urgency <= 100):
             raise PortfolioMetadataError("controller_urgency must be 0..100 or null")
@@ -315,9 +371,46 @@ def parse_portfolio_metadata(
             requirements=requirements,
             task_body_sha256=digest,
             work_class=work_class,
+            different_reviewer_requirement=different_reviewer_requirement,
         )
 
     missing = set(relevant) - set(by_key)
     if missing:
         raise PortfolioMetadataError("portfolio metadata is missing an ordinary candidate task/role entry")
     return tuple(by_key[key] for key in sorted(by_key, key=lambda item: (item[0], item[1].value)))
+
+
+def parse_repository_reviewer_requirements(
+    control: IssueDocument,
+    *,
+    candidates: Iterable[ClaimCandidate],
+    now: datetime,
+) -> tuple[tuple[str, Role, DifferentReviewerRequirement], ...]:
+    """Read optional reviewer-signature requirements for repository pickup.
+
+    Repository-scoped pickup historically does not require portfolio metadata.
+    Keep that compatibility: activate companion validation only when the
+    companion block itself carries the accepted reviewer-requirement field.
+    When present, the normal metadata parser supplies digest/fingerprint/
+    freshness binding and fails closed on malformed or ambiguous evidence.
+    """
+
+    body = control.body
+    begin = body.find(PORTFOLIO_MARKER_BEGIN)
+    end = body.find(PORTFOLIO_MARKER_END)
+    if begin < 0 or end < 0:
+        if "different_reviewer_requirement" in body:
+            raise PortfolioMetadataError(
+                "different_reviewer_requirement requires bound portfolio metadata"
+            )
+        return ()
+    segment = body[begin:end]
+    if "different_reviewer_requirement" not in segment:
+        return ()
+
+    items = parse_portfolio_metadata(control, candidates=candidates, now=now)
+    return tuple(
+        (item.ranking.task, item.ranking.role, item.different_reviewer_requirement)
+        for item in items
+        if item.different_reviewer_requirement is not None
+    )
