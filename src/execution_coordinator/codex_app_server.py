@@ -39,6 +39,10 @@ class CodexAppServerProtocolError(RuntimeError):
     """The app-server transport returned evidence that cannot be trusted."""
 
 
+class CodexAppServerRpcError(CodexAppServerProtocolError):
+    """The app-server explicitly rejected one RPC request."""
+
+
 class CodexTurnStatus(StrEnum):
     COMPLETED = "completed"
     FAILED = "failed"
@@ -201,7 +205,7 @@ def _response_result(message: dict[str, object], request_id: int) -> dict[str, o
         )
     reason = _rpc_error_reason(message)
     if reason is not None:
-        raise CodexAppServerProtocolError(reason)
+        raise CodexAppServerRpcError(reason)
     result = message.get("result")
     if not isinstance(result, dict):
         raise CodexAppServerProtocolError(
@@ -234,6 +238,10 @@ def _terminal_turn_result(
     thread_id: str,
     turn_id: str,
 ) -> CodexTurnResult | None:
+    if "id" in message and "method" in message:
+        raise CodexAppServerProtocolError(
+            "unexpected app-server request during bounded turn observation"
+        )
     if message.get("method") != "turn/completed":
         return None
     params = message.get("params")
@@ -389,9 +397,16 @@ class CodexAppServerAdapter:
             transport.send({"id": rpc_id, "method": method, "params": params})
             result = self._receive_response(transport, rpc_id)
             thread_id = _thread_id(result)
-        except CodexAppServerProtocolError as exc:
+        except CodexAppServerRpcError as exc:
             transport.close()
             return DispatchOutcome.failed(
+                request_id=request.request_id,
+                reason=str(exc),
+                schema_version=request.schema_version,
+            )
+        except CodexAppServerProtocolError as exc:
+            transport.close()
+            return DispatchOutcome.ambiguous(
                 request_id=request.request_id,
                 reason=str(exc),
                 schema_version=request.schema_version,
@@ -479,11 +494,19 @@ class CodexAppServerAdapter:
             )
             turn_id = _turn_id(result)
             session.active_turn_id = turn_id
-        except CodexAppServerProtocolError as exc:
+        except CodexAppServerRpcError as exc:
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=None,
                 status=CodexTurnStatus.FAILED,
+                reason=str(exc),
+            )
+        except CodexAppServerProtocolError as exc:
+            session.reconciliation_required = True
+            return CodexTurnResult(
+                thread_id=session.context.thread_id,
+                turn_id=None,
+                status=CodexTurnStatus.AMBIGUOUS,
                 reason=str(exc),
             )
         except (OSError, EOFError) as exc:
