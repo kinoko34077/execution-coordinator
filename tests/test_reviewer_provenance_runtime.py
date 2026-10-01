@@ -127,6 +127,11 @@ def _review_control(*, malformed_requirement=False, metadata=True):
 
 
 class ActionsReviewProvenanceTests(unittest.TestCase):
+    def test_omitted_transport_pair_does_not_invent_review_provenance(self):
+        _, fields = parse_command("/pickup\nworker_system: chatgpt")
+        observation = build_observation(fields, _Profile, NOW)
+        self.assertNotIn("review_provenance", observation)
+
     def test_explicit_transport_pair_builds_nested_review_provenance(self):
         body = (
             "/pickup\n"
@@ -223,8 +228,59 @@ class ReviewerRequirementMetadataTests(unittest.TestCase):
         with self.assertRaises(PortfolioMetadataError):
             parse_portfolio_metadata(control, candidates=(candidate,), now=NOW)
 
+    def test_reviewer_requirement_is_reviewer_only(self):
+        control, _, candidate = _review_control()
+        body = control.body.replace(
+            '"role": "reviewer", "task_body_sha256"',
+            '"role": "implementer", "task_body_sha256"',
+        )
+        mutated = IssueDocument(
+            repository=control.repository,
+            number=control.number,
+            state=control.state,
+            body=body,
+            html_url=control.html_url,
+            title=control.title,
+            author_association=control.author_association,
+        )
+        with self.assertRaises(PortfolioMetadataError):
+            parse_portfolio_metadata(mutated, candidates=(candidate,), now=NOW)
+
 
 class ReviewerRequirementEvidenceTests(unittest.TestCase):
+    def test_repository_scope_without_requirement_preserves_legacy_reviewer(self):
+        control, task, _ = _review_control(metadata=False)
+        evidence, _ = gather_evidence(
+            GatherInputs(
+                target_repository="owner/repo",
+                worker_id="chatgpt:s1",
+                control_documents=(control,),
+                agents_md_read=True,
+            ),
+            issue_reader=_Reader(control, task),
+            state_reader=_Store(),
+            now=NOW,
+        )
+        self.assertTrue(evidence["frontier"]["complete"])
+        [item] = evidence["frontier"]["candidates"]
+        self.assertNotIn("different_reviewer_requirement", item)
+
+    def test_repository_scope_malformed_requirement_fails_closed(self):
+        control, task, _ = _review_control(malformed_requirement=True)
+        evidence, _ = gather_evidence(
+            GatherInputs(
+                target_repository="owner/repo",
+                worker_id="chatgpt:s1",
+                control_documents=(control,),
+                agents_md_read=True,
+            ),
+            issue_reader=_Reader(control, task),
+            state_reader=_Store(),
+            now=NOW,
+        )
+        self.assertFalse(evidence["frontier"]["complete"])
+        self.assertEqual([], evidence["frontier"]["candidates"])
+
     def test_repository_scope_projects_bound_reviewer_requirement(self):
         control, task, _ = _review_control()
         evidence, _ = gather_evidence(
