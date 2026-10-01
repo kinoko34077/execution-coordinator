@@ -14,7 +14,11 @@ from .discovery import (
 )
 from .managed_frontier import ManagedFrontierResult, enumerate_managed_frontier
 from .model import Role
-from .portfolio_metadata import PortfolioMetadataError, parse_portfolio_metadata
+from .portfolio_metadata import (
+    DifferentReviewerRequirement,
+    PortfolioMetadataError,
+    parse_portfolio_metadata,
+)
 from .query import StateReader
 from .ranking import RankedFrontierResult, rank_managed_frontier
 
@@ -30,6 +34,9 @@ class PortfolioRuntimeRead:
     complete: bool
     metadata_error: str | None = None
     work_classes: tuple[tuple[str, Role, str], ...] = ()
+    reviewer_requirements: tuple[
+        tuple[str, Role, DifferentReviewerRequirement], ...
+    ] = ()
 
 
 def _section(document: IssueDocument, name: str) -> str:
@@ -160,6 +167,18 @@ def read_portfolio_runtime(
         )
         if item.work_class is not None
     )
+    reviewer_requirements = tuple(
+        (
+            item.ranking.task,
+            item.ranking.role,
+            item.different_reviewer_requirement,
+        )
+        for item in sorted(
+            metadata_items,
+            key=lambda value: (value.ranking.task, value.ranking.role.value),
+        )
+        if item.different_reviewer_requirement is not None
+    )
     return PortfolioRuntimeRead(
         observed_at=now,
         frontier=frontier,
@@ -167,4 +186,5 @@ def read_portfolio_runtime(
         requirements=requirements,
         complete=True,
         work_classes=work_classes,
+        reviewer_requirements=reviewer_requirements,
     )
