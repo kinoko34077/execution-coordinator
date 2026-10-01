@@ -164,6 +164,23 @@ def _bootstrap_parameters(request: ExecutionRequest) -> dict[str, str]:
     return dict(request.bootstrap.parameters)
 
 
+def _runtime_policy(parameters: dict[str, str]) -> tuple[str, str, str]:
+    cwd = parameters.get("cwd")
+    if not isinstance(cwd, str) or not cwd.strip():
+        raise ValueError("cwd must be a non-empty bootstrap parameter")
+
+    sandbox = parameters.get("codex_sandbox")
+    if sandbox != "read-only":
+        raise ValueError("codex_sandbox must be exactly read-only for Stage-C transport")
+
+    approval_policy = parameters.get("codex_approval_policy")
+    if approval_policy != "never":
+        raise ValueError(
+            "codex_approval_policy must be exactly never for Stage-C transport"
+        )
+    return cwd, sandbox, approval_policy
+
+
 def _rpc_error_reason(message: dict[str, object]) -> str | None:
     if "error" not in message:
         return None
@@ -211,6 +228,44 @@ def _turn_id(result: dict[str, object]) -> str:
     return _require_nonempty(turn.get("id"), "turn.id")
 
 
+def _terminal_turn_result(
+    message: dict[str, object],
+    *,
+    thread_id: str,
+    turn_id: str,
+) -> CodexTurnResult | None:
+    if message.get("method") != "turn/completed":
+        return None
+    params = message.get("params")
+    if not isinstance(params, dict):
+        raise CodexAppServerProtocolError("turn/completed params must be an object")
+    turn = params.get("turn")
+    if not isinstance(turn, dict):
+        raise CodexAppServerProtocolError("turn/completed is missing turn")
+    completed_id = _require_nonempty(turn.get("id"), "turn/completed turn.id")
+    if completed_id != turn_id:
+        raise CodexAppServerProtocolError(
+            "turn/completed turn.id does not match active turn"
+        )
+    raw_status = turn.get("status")
+    try:
+        status = CodexTurnStatus(raw_status)
+    except (TypeError, ValueError) as exc:
+        raise CodexAppServerProtocolError(
+            "turn/completed status is unsupported"
+        ) from exc
+    if status is CodexTurnStatus.AMBIGUOUS:
+        raise CodexAppServerProtocolError(
+            "provider cannot emit synthetic ambiguous terminal status"
+        )
+    return CodexTurnResult(
+        thread_id=thread_id,
+        turn_id=turn_id,
+        status=status,
+        reason=None if status is CodexTurnStatus.COMPLETED else status.value,
+    )
+
+
 class CodexAppServerAdapter:
     """Bounded Codex app-server transport adapter.
 
@@ -246,12 +301,16 @@ class CodexAppServerAdapter:
         self,
         transport: CodexJsonLineTransport,
         request_id: int,
+        *,
+        notifications: list[dict[str, object]] | None = None,
     ) -> dict[str, object]:
         while True:
             message = transport.receive()
             if message is None:
                 raise EOFError("codex app-server closed before RPC response")
             if "id" not in message:
+                if notifications is not None:
+                    notifications.append(message)
                 continue
             return _response_result(message, request_id)
 
@@ -269,6 +328,24 @@ class CodexAppServerAdapter:
     def start(self, request: ExecutionRequest) -> DispatchOutcome:
         if not isinstance(request, ExecutionRequest):
             raise TypeError("request must be an ExecutionRequest")
+
+        parameters = _bootstrap_parameters(request)
+        try:
+            cwd, sandbox, approval_policy = _runtime_policy(parameters)
+            resume_thread_id = parameters.get("resume_thread_id")
+            model = parameters.get("model")
+            if resume_thread_id is None:
+                if not isinstance(model, str) or not model.strip():
+                    raise ValueError("model must be a non-empty bootstrap parameter")
+            elif not resume_thread_id.strip():
+                raise ValueError("resume_thread_id must not be empty")
+        except ValueError as exc:
+            return DispatchOutcome.failed(
+                request_id=request.request_id,
+                reason=str(exc),
+                schema_version=request.schema_version,
+            )
+
         if not os.environ.get(ACCESS_TOKEN_ENV):
             return DispatchOutcome.unavailable(
                 request_id=request.request_id,
@@ -295,30 +372,18 @@ class CodexAppServerAdapter:
                 schema_version=request.schema_version,
             )
 
-        parameters = _bootstrap_parameters(request)
-        resume_thread_id = parameters.get("resume_thread_id")
         rpc_id = 2
+        common_params: dict[str, object] = {
+            "cwd": cwd,
+            "sandbox": sandbox,
+            "approvalPolicy": approval_policy,
+        }
         if resume_thread_id is None:
-            model = parameters.get("model")
-            if not isinstance(model, str) or not model.strip():
-                transport.close()
-                return DispatchOutcome.failed(
-                    request_id=request.request_id,
-                    reason="Codex thread/start requires bootstrap model",
-                    schema_version=request.schema_version,
-                )
             method = "thread/start"
-            params: dict[str, object] = {"model": model}
+            params: dict[str, object] = {**common_params, "model": model}
         else:
-            if not resume_thread_id.strip():
-                transport.close()
-                return DispatchOutcome.failed(
-                    request_id=request.request_id,
-                    reason="resume_thread_id must not be empty",
-                    schema_version=request.schema_version,
-                )
             method = "thread/resume"
-            params = {"threadId": resume_thread_id}
+            params = {**common_params, "threadId": resume_thread_id}
 
         try:
             transport.send({"id": rpc_id, "method": method, "params": params})
@@ -395,6 +460,7 @@ class CodexAppServerAdapter:
 
         rpc_id = session.next_request_id
         session.next_request_id += 1
+        pending_notifications: list[dict[str, object]] = []
         try:
             session.transport.send(
                 {
@@ -406,7 +472,11 @@ class CodexAppServerAdapter:
                     },
                 }
             )
-            result = self._receive_response(session.transport, rpc_id)
+            result = self._receive_response(
+                session.transport,
+                rpc_id,
+                notifications=pending_notifications,
+            )
             turn_id = _turn_id(result)
             session.active_turn_id = turn_id
         except CodexAppServerProtocolError as exc:
@@ -426,6 +496,15 @@ class CodexAppServerAdapter:
             )
 
         try:
+            for message in pending_notifications:
+                terminal = _terminal_turn_result(
+                    message,
+                    thread_id=session.context.thread_id,
+                    turn_id=turn_id,
+                )
+                if terminal is not None:
+                    return terminal
+
             while True:
                 message = session.transport.receive()
                 if message is None:
@@ -436,42 +515,13 @@ class CodexAppServerAdapter:
                         status=CodexTurnStatus.AMBIGUOUS,
                         reason="app-server closed before turn/completed",
                     )
-                if message.get("method") != "turn/completed":
-                    continue
-                params = message.get("params")
-                if not isinstance(params, dict):
-                    raise CodexAppServerProtocolError(
-                        "turn/completed params must be an object"
-                    )
-                turn = params.get("turn")
-                if not isinstance(turn, dict):
-                    raise CodexAppServerProtocolError(
-                        "turn/completed is missing turn"
-                    )
-                completed_id = _require_nonempty(
-                    turn.get("id"), "turn/completed turn.id"
-                )
-                if completed_id != turn_id:
-                    raise CodexAppServerProtocolError(
-                        "turn/completed turn.id does not match active turn"
-                    )
-                raw_status = turn.get("status")
-                try:
-                    status = CodexTurnStatus(raw_status)
-                except (TypeError, ValueError) as exc:
-                    raise CodexAppServerProtocolError(
-                        "turn/completed status is unsupported"
-                    ) from exc
-                if status is CodexTurnStatus.AMBIGUOUS:
-                    raise CodexAppServerProtocolError(
-                        "provider cannot emit synthetic ambiguous terminal status"
-                    )
-                return CodexTurnResult(
+                terminal = _terminal_turn_result(
+                    message,
                     thread_id=session.context.thread_id,
                     turn_id=turn_id,
-                    status=status,
-                    reason=None if status is CodexTurnStatus.COMPLETED else status.value,
                 )
+                if terminal is not None:
+                    return terminal
         except CodexAppServerProtocolError:
             session.reconciliation_required = True
             raise
