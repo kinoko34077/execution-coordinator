@@ -164,6 +164,28 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             [message.get("method") for message in factory.transport.sent].count("thread/start"),
         )
 
+    def test_malformed_thread_start_success_is_ambiguous_but_rpc_error_is_failed(self) -> None:
+        malformed_factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {}},
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=malformed_factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            malformed = adapter.start(_codex_request())
+
+        self.assertEqual(LaunchStatus.AMBIGUOUS, malformed.launch_status)
+
+        error_factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "error": {"message": "thread rejected"}},
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=error_factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            rejected = adapter.start(_codex_request())
+
+        self.assertEqual(LaunchStatus.FAILED, rejected.launch_status)
+        self.assertIn("thread rejected", rejected.reason)
+
     def test_completed_turn_requires_matching_terminal_event(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -220,6 +242,39 @@ class CodexAppServerAdapterTests(unittest.TestCase):
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
+
+    def test_malformed_turn_start_success_is_ambiguous_and_poisoned(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "result": {}},
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertEqual(
+            1,
+            [m.get("method") for m in factory.transport.sent].count("turn/start"),
+        )
+
+    def test_turn_start_rpc_error_is_failed_without_ambiguity(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "error": {"message": "turn rejected"}},
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+
+        self.assertEqual(CodexTurnStatus.FAILED, result.status)
+        self.assertIn("turn rejected", result.reason)
 
     def test_transport_loss_after_turn_start_is_ambiguous(self) -> None:
         factory = _Factory([
