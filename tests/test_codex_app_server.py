@@ -276,6 +276,22 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         self.assertEqual(CodexTurnStatus.FAILED, result.status)
         self.assertIn("turn rejected", result.reason)
 
+    def test_turn_start_protocol_error_requires_reconciliation(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "result": "malformed"},
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
+
     def test_transport_loss_after_turn_start_is_ambiguous(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -329,6 +345,25 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             1,
             [m.get("method") for m in factory.transport.sent].count("turn/start"),
         )
+
+    def test_unexpected_server_request_during_turn_fails_closed(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "result": {"turn": {"id": "turn-1"}}},
+            {
+                "id": 99,
+                "method": "item/commandExecution/requestApproval",
+                "params": {"turnId": "turn-1"},
+            },
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            with self.assertRaises(CodexAppServerProtocolError):
+                adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
 
     def test_malformed_terminal_event_fails_closed(self) -> None:
         factory = _Factory([
