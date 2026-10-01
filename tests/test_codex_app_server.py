@@ -89,6 +89,10 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         self.assertNotIn("turn/start", [message.get("method") for message in factory.transport.sent])
         command_text = " ".join(factory.commands[0])
         self.assertIn('env_key="ACCESS_TOKEN"', command_text)
+        self.assertIn(
+            "shell_environment_policy.ignore_default_excludes=false",
+            command_text,
+        )
         self.assertNotIn("secret-token", command_text)
         self.assertNotIn("secret-token", repr(adapter))
 
@@ -180,6 +184,26 @@ class CodexAppServerAdapterTests(unittest.TestCase):
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
+
+    def test_ambiguous_turn_poison_session_until_reconciliation(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "result": {"turn": {"id": "turn-1"}}},
+            None,
+        ])
+        adapter = CodexAppServerAdapter(transport_factory=factory)
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertEqual(
+            1,
+            [m.get("method") for m in factory.transport.sent].count("turn/start"),
+        )
 
     def test_malformed_terminal_event_fails_closed(self) -> None:
         factory = _Factory([
