@@ -30,6 +30,7 @@ Cross-repository authority:
 - Issue #97 / merged PR #98 own accepted Issue-comment reachability for the portfolio/null-target pickup path;
 - Issue #101 / merged PR #102 own accepted executable manual-pickup expired-claim self-heal using the existing serialized `expire` authority;
 - Issue #105 / merged PR #106 own accepted end-to-end reviewer-provenance propagation through repository and portfolio pickup;
+- Issue #113 / merged PR #114 own the accepted multi-track portfolio eligibility repair: overall Control `Work Status=BLOCKED` is not a repository-wide veto when an explicit candidate is independently unblocked and repository-/Control-wide hard gates remain clear;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
@@ -432,7 +433,7 @@ Accepted #94/#95 evidence: reviewed head `77822567e9c3394e62ecd2acaea6d2f5a7e8aa
 
 Issue #97 / merged PR #98 then expose the already-accepted portfolio/null-target path through the same Issue-comment transport. `target:` is optional for `/pickup`; explicit values preserve repository scope and omission maps to `target_repository=None`. `worker_system` remains required and `/release` grammar is unchanged. Accepted #97/#98 evidence: reviewed head `d115131ba958a69a7f590ad130dc24257a7252af`; exact-head Verify `36664746320` SUCCESS; clean current-head Formal Review; merge advanced main to `c8e1c7972dca8f8a0c6065815152da8ef72f5989`; post-main Verify `36664825599` SUCCESS.
 
-Stage 2 audit/triage supply automation and Stage 3 batching/rotation are not released by Stage 1 transport acceptance. The real Claude/OIDC provider E2E Human Gate and `PILOT` / devflow #188/#105 PARK boundaries remain unchanged.
+Stage 1 transport acceptance did not itself release later maintenance stages. Those later rollout stages have since advanced independently: devflow Stage 2 is accepted through S2.8, the first bounded Stage-3 rotation is accepted at 3/3, and Stage 4 richer scale/fairness controls were evaluated as `NOT_NEEDED`. The real Claude/OIDC provider E2E Human Gate and `PILOT` / devflow #188/#105 PARK boundaries remain unchanged.
 
 ### Development Reconciliation demand adoption
 
@@ -563,10 +564,10 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 - no discovery/publication result, execution claim, or eligibility projection overrides release/deploy/publication/credential/permission/destructive/user-decision confirmation boundaries;
 - #49, #66 and #68 acceptance does not release any scheduler/provider/controller/repo-monitor slice;
 - #87/#88 controller-first acceptance, #89/#90 Stage 1 runtime acceptance, #94/#95/#97/#98 transport acceptance, and #105/#106 reviewer-provenance acceptance do not release real provider identity configuration, adoption expansion, or devflow #188/#105 PARK;
-- devflow Stage 2 is released under #215/#232, with S2.2–S2.5 accepted on devflow main and S2.6 real read-only pilot first unfinished; Stage 3 remains unreleased until S2.8 acceptance.
+- devflow Stage 2 is accepted through S2.8; the first bounded Stage-3 rotation is accepted at 3/3 under completed #302; Stage 4 evidence owner #307 concluded `NOT_NEEDED`; completed pilot items are retired from supply and current runnable lightweight supply is none.
 
 ## Next action
 
 Controller-first GitHub Actions auto-launch v1 (#87/#88), Stage 1 work-class runtime propagation (#89/#90), Issue-comment pickup transport (#94/#95/#97/#98), manual expiry self-heal (#101/#102), and reviewer-provenance pickup eligibility (#105/#106) are accepted. The moving accepted-main SHA remains owned by devflow Control #107 rather than this document.
 
-Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT` and devflow #188/#105 PARK remains unreleased. Devflow Stage 2 is released with S2.6 as the first unfinished pilot; Stage 3 remains unreleased until S2.8. Provider-adapter continuation under devflow #250 is a separate Human/security-gated path.
+Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT` and devflow #188/#105 PARK remains unreleased. The lightweight-work rollout is accepted through the first Stage-3 3/3 cycle, with Stage 4 `NOT_NEEDED`; standing future supply remains governed by devflow #209. Provider-adapter continuation under devflow #250 remains separate and is currently repair-first under Issue #110 / PR #111 before fresh verification/review and the qualifying different-reviewer gate.
