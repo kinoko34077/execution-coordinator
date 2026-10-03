@@ -54,7 +54,6 @@ def _eligible_control(document: IssueDocument) -> bool:
         and document.author_association in TRUSTED_AUTHOR_ASSOCIATIONS
         and document.title.strip() == f"[REPO] {repository.split('/', 1)[-1]}"
         and _section(document, "repository state") == "ACTIVE"
-        and _section(document, "work status") != "BLOCKED"
         and not any(token in next_action for token in _HUMAN_TOKENS)
     )
 

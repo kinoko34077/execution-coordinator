@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 from execution_coordinator.portfolio_runtime import read_portfolio_runtime
@@ -33,6 +34,33 @@ class PortfolioRuntimeTests(unittest.TestCase):
         self.assertEqual(frozenset({"python"}), by_task["owner/a#8"].required_capabilities)
         self.assertEqual(frozenset({"windows"}), by_task["owner/a#8"].required_environment)
         self.assertEqual(before, store.body)
+
+    def test_blocked_control_can_still_project_an_explicit_unblocked_task(self) -> None:
+        control, task, _ = _portfolio_control("owner/a", 201, 8)
+        control = replace(
+            control,
+            body=control.body.replace(
+                "## Work Status\n\n`READY_FOR_IMPLEMENTATION`",
+                "## Work Status\n\n`BLOCKED`",
+                1,
+            ),
+        )
+
+        result = read_portfolio_runtime(
+            (control,),
+            issue_reader=_Reader(control, task),
+            state_reader=_Store(),
+            worker_id="controller:claude-v1",
+            now=NOW,
+        )
+
+        self.assertTrue(result.complete)
+        self.assertIsNotNone(result.ranked)
+        assert result.ranked is not None
+        self.assertEqual(
+            ["owner/a#8"],
+            [item.candidate.task for item in result.ranked.ranked],
+        )
 
     def test_missing_metadata_fails_closed_without_ranked_work(self) -> None:
         ca, ta, _ = _portfolio_control("owner/a", 201, 8)
