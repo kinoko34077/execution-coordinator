@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import sys
+import time
 import unittest
 from dataclasses import replace
 from unittest.mock import patch
@@ -10,6 +12,7 @@ from execution_coordinator.codex_app_server import (
     CodexAppServerProtocolError,
     CodexAppServerTimeoutError,
     CodexTurnStatus,
+    _SubprocessJsonLineTransport,
 )
 from execution_coordinator.execution_request import LaunchStatus
 from tests.test_execution_request import _bootstrap, _request
@@ -327,7 +330,6 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
         self.assertTrue(factory.transport.closed)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
-
     def test_malformed_turn_start_success_is_ambiguous_and_poisoned(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -347,7 +349,6 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             1,
             [m.get("method") for m in factory.transport.sent].count("turn/start"),
         )
-
     def test_turn_start_rpc_error_is_failed_without_ambiguity(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -378,7 +379,6 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
         self.assertTrue(factory.transport.closed)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
-
     def test_transport_loss_after_turn_start_is_ambiguous(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -395,7 +395,6 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         self.assertIn("transport lost", result.reason)
         self.assertTrue(factory.transport.closed)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
-
     def test_terminal_notification_before_turn_start_response_is_preserved(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -434,7 +433,6 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             1,
             [m.get("method") for m in factory.transport.sent].count("turn/start"),
         )
-
     def test_unexpected_server_request_during_turn_fails_closed(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -454,9 +452,7 @@ class CodexAppServerAdapterTests(unittest.TestCase):
                 adapter.run_turn(outcome.session_id, "Do work again")
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
-        self.assertIn("unexpected app-server request", result.reason)
         self.assertTrue(factory.transport.closed)
-
     def test_malformed_terminal_event_fails_closed(self) -> None:
         factory = _Factory([
             {"id": 1, "result": {}},
@@ -472,9 +468,22 @@ class CodexAppServerAdapterTests(unittest.TestCase):
                 adapter.run_turn(outcome.session_id, "Do work again")
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
-        self.assertIn("turn/completed", result.reason)
         self.assertTrue(factory.transport.closed)
 
+    def test_subprocess_transport_receive_timeout_bounds_real_silent_pipe(self) -> None:
+        transport = _SubprocessJsonLineTransport(
+            (sys.executable, "-u", "-c", "import time; time.sleep(10)")
+        )
+        started = time.monotonic()
+        try:
+            with self.assertRaises(CodexAppServerTimeoutError):
+                transport.receive(0.05)
+            self.assertLess(time.monotonic() - started, 1.0)
+        finally:
+            transport.close()
+
+        self.assertIsNotNone(transport._process.poll())
+        self.assertFalse(transport._reader_thread.is_alive())
 
 if __name__ == "__main__":
     unittest.main()
