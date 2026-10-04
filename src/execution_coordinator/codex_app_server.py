@@ -547,6 +547,11 @@ class CodexAppServerAdapter:
             raise KeyError("unknown Codex app-server session")
         return session.context
 
+    @staticmethod
+    def _abandon_session(session: _LiveSession) -> None:
+        session.reconciliation_required = True
+        session.transport.close()
+
     def run_turn(self, session_id: str | None, prompt: str) -> CodexTurnResult:
         if not isinstance(session_id, str) or not session_id.strip():
             raise ValueError("session_id must be a non-empty string")
@@ -593,7 +598,7 @@ class CodexAppServerAdapter:
                 reason=str(exc),
             )
         except CodexAppServerProtocolError as exc:
-            session.reconciliation_required = True
+            self._abandon_session(session)
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=None,
@@ -601,8 +606,7 @@ class CodexAppServerAdapter:
                 reason=str(exc),
             )
         except (OSError, EOFError, CodexAppServerTimeoutError) as exc:
-            session.reconciliation_required = True
-            session.transport.close()
+            self._abandon_session(session)
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=None,
@@ -626,7 +630,7 @@ class CodexAppServerAdapter:
                     turn_deadline,
                 )
                 if message is None:
-                    session.reconciliation_required = True
+                    self._abandon_session(session)
                     return CodexTurnResult(
                         thread_id=session.context.thread_id,
                         turn_id=turn_id,
@@ -641,19 +645,23 @@ class CodexAppServerAdapter:
                 if terminal is not None:
                     return terminal
         except CodexAppServerTimeoutError as exc:
-            session.reconciliation_required = True
-            session.transport.close()
+            self._abandon_session(session)
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=turn_id,
                 status=CodexTurnStatus.AMBIGUOUS,
                 reason=str(exc),
             )
-        except CodexAppServerProtocolError:
-            session.reconciliation_required = True
-            raise
+        except CodexAppServerProtocolError as exc:
+            self._abandon_session(session)
+            return CodexTurnResult(
+                thread_id=session.context.thread_id,
+                turn_id=turn_id,
+                status=CodexTurnStatus.AMBIGUOUS,
+                reason=str(exc),
+            )
         except OSError as exc:
-            session.reconciliation_required = True
+            self._abandon_session(session)
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=turn_id,
