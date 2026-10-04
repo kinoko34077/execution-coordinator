@@ -325,6 +325,7 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             result = adapter.run_turn(outcome.session_id, "Do work")
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertTrue(factory.transport.closed)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
 
     def test_malformed_turn_start_success_is_ambiguous_and_poisoned(self) -> None:
@@ -341,6 +342,7 @@ class CodexAppServerAdapterTests(unittest.TestCase):
                 adapter.run_turn(outcome.session_id, "Do work again")
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertTrue(factory.transport.closed)
         self.assertEqual(
             1,
             [m.get("method") for m in factory.transport.sent].count("turn/start"),
@@ -374,6 +376,7 @@ class CodexAppServerAdapterTests(unittest.TestCase):
                 adapter.run_turn(outcome.session_id, "Do work again")
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertTrue(factory.transport.closed)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
 
     def test_transport_loss_after_turn_start_is_ambiguous(self) -> None:
@@ -390,6 +393,7 @@ class CodexAppServerAdapterTests(unittest.TestCase):
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
         self.assertIn("transport lost", result.reason)
+        self.assertTrue(factory.transport.closed)
         self.assertEqual(1, [m.get("method") for m in factory.transport.sent].count("turn/start"))
 
     def test_terminal_notification_before_turn_start_response_is_preserved(self) -> None:
@@ -425,6 +429,7 @@ class CodexAppServerAdapterTests(unittest.TestCase):
                 adapter.run_turn(outcome.session_id, "Do work again")
 
         self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertTrue(factory.transport.closed)
         self.assertEqual(
             1,
             [m.get("method") for m in factory.transport.sent].count("turn/start"),
@@ -444,10 +449,13 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         adapter = CodexAppServerAdapter(transport_factory=factory)
         with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
             outcome = adapter.start(_codex_request())
-            with self.assertRaises(CodexAppServerProtocolError):
-                adapter.run_turn(outcome.session_id, "Do work")
+            result = adapter.run_turn(outcome.session_id, "Do work")
             with self.assertRaisesRegex(RuntimeError, "reconciliation"):
                 adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertIn("unexpected app-server request", result.reason)
+        self.assertTrue(factory.transport.closed)
 
     def test_malformed_terminal_event_fails_closed(self) -> None:
         factory = _Factory([
@@ -459,8 +467,13 @@ class CodexAppServerAdapterTests(unittest.TestCase):
         adapter = CodexAppServerAdapter(transport_factory=factory)
         with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
             outcome = adapter.start(_codex_request())
-            with self.assertRaises(CodexAppServerProtocolError):
-                adapter.run_turn(outcome.session_id, "Do work")
+            result = adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertIn("turn/completed", result.reason)
+        self.assertTrue(factory.transport.closed)
 
 
 if __name__ == "__main__":
