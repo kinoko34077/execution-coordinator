@@ -8,6 +8,7 @@ from unittest.mock import patch
 from execution_coordinator.codex_app_server import (
     CodexAppServerAdapter,
     CodexAppServerProtocolError,
+    CodexAppServerTimeoutError,
     CodexTurnStatus,
 )
 from execution_coordinator.execution_request import LaunchStatus
@@ -23,7 +24,7 @@ class _FakeTransport:
     def send(self, message):
         self.sent.append(message)
 
-    def receive(self):
+    def receive(self, timeout_seconds=None):
         if not self.incoming:
             return None
         value = self.incoming.pop(0)
@@ -163,6 +164,89 @@ class CodexAppServerAdapterTests(unittest.TestCase):
             1,
             [message.get("method") for message in factory.transport.sent].count("thread/start"),
         )
+
+    def test_initialize_silence_times_out_failed_and_closes_transport(self) -> None:
+        factory = _Factory([
+            CodexAppServerTimeoutError("receive deadline exceeded"),
+        ])
+        adapter = CodexAppServerAdapter(
+            transport_factory=factory,
+            rpc_timeout_seconds=0.01,
+        )
+
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+
+        self.assertEqual(LaunchStatus.FAILED, outcome.launch_status)
+        self.assertIn("deadline", outcome.reason)
+        self.assertTrue(factory.transport.closed)
+
+    def test_thread_start_silence_times_out_ambiguous_and_closes_transport(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            CodexAppServerTimeoutError("receive deadline exceeded"),
+        ])
+        adapter = CodexAppServerAdapter(
+            transport_factory=factory,
+            rpc_timeout_seconds=0.01,
+        )
+
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+
+        self.assertEqual(LaunchStatus.AMBIGUOUS, outcome.launch_status)
+        self.assertIn("deadline", outcome.reason)
+        self.assertTrue(factory.transport.closed)
+        self.assertEqual(
+            1,
+            [message.get("method") for message in factory.transport.sent].count("thread/start"),
+        )
+
+    def test_turn_start_silence_is_ambiguous_poisoned_and_closes_transport(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            CodexAppServerTimeoutError("receive deadline exceeded"),
+        ])
+        adapter = CodexAppServerAdapter(
+            transport_factory=factory,
+            rpc_timeout_seconds=0.01,
+            turn_timeout_seconds=0.01,
+        )
+
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertIn("deadline", result.reason)
+        self.assertTrue(factory.transport.closed)
+
+    def test_terminal_silence_is_ambiguous_poisoned_and_closes_transport(self) -> None:
+        factory = _Factory([
+            {"id": 1, "result": {}},
+            {"id": 2, "result": {"thread": {"id": "thread-1"}}},
+            {"id": 3, "result": {"turn": {"id": "turn-1"}}},
+            CodexAppServerTimeoutError("receive deadline exceeded"),
+        ])
+        adapter = CodexAppServerAdapter(
+            transport_factory=factory,
+            rpc_timeout_seconds=0.01,
+            turn_timeout_seconds=0.01,
+        )
+
+        with patch.dict(os.environ, {"ACCESS_TOKEN": "token"}, clear=True):
+            outcome = adapter.start(_codex_request())
+            result = adapter.run_turn(outcome.session_id, "Do work")
+            with self.assertRaisesRegex(RuntimeError, "reconciliation"):
+                adapter.run_turn(outcome.session_id, "Do work again")
+
+        self.assertEqual(CodexTurnStatus.AMBIGUOUS, result.status)
+        self.assertEqual("turn-1", result.turn_id)
+        self.assertIn("deadline", result.reason)
+        self.assertTrue(factory.transport.closed)
 
     def test_malformed_thread_start_success_is_ambiguous_but_rpc_error_is_failed(self) -> None:
         malformed_factory = _Factory([
