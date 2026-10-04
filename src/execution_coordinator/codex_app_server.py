@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import math
 import os
+import queue
 import subprocess
+import threading
+import time
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Callable, Protocol, Sequence
@@ -11,6 +15,8 @@ from .execution_request import DispatchOutcome, ExecutionRequest
 
 
 ACCESS_TOKEN_ENV = "ACCESS_TOKEN"
+DEFAULT_RPC_TIMEOUT_SECONDS = 30.0
+DEFAULT_TURN_TIMEOUT_SECONDS = 900.0
 CODEX_APP_SERVER_COMMAND = (
     "codex",
     "app-server",
@@ -41,6 +47,10 @@ class CodexAppServerProtocolError(RuntimeError):
 
 class CodexAppServerRpcError(CodexAppServerProtocolError):
     """The app-server explicitly rejected one RPC request."""
+
+
+class CodexAppServerTimeoutError(TimeoutError):
+    """The app-server produced no trustworthy evidence before the deadline."""
 
 
 class CodexTurnStatus(StrEnum):
@@ -77,7 +87,7 @@ class CodexTurnResult:
 class CodexJsonLineTransport(Protocol):
     def send(self, message: dict[str, object]) -> None: ...
 
-    def receive(self) -> dict[str, object] | None: ...
+    def receive(self, timeout_seconds: float | None = None) -> dict[str, object] | None: ...
 
     def close(self) -> None: ...
 
@@ -102,6 +112,29 @@ class _SubprocessJsonLineTransport:
             self.close()
             raise OSError("codex app-server stdio pipes are unavailable")
 
+        self._incoming: queue.Queue[str | Exception | None] = queue.Queue()
+        self._reader_thread = threading.Thread(
+            target=self._read_stdout,
+            name="codex-app-server-stdout",
+            daemon=True,
+        )
+        self._reader_thread.start()
+
+    def _read_stdout(self) -> None:
+        stdout = self._process.stdout
+        if stdout is None:
+            self._incoming.put(OSError("codex app-server stdout is unavailable"))
+            return
+        try:
+            while True:
+                line = stdout.readline()
+                if line == "":
+                    self._incoming.put(None)
+                    return
+                self._incoming.put(line)
+        except Exception as exc:  # pragma: no cover - platform pipe failure
+            self._incoming.put(exc)
+
     def send(self, message: dict[str, object]) -> None:
         if self._process.stdin is None:
             raise OSError("codex app-server stdin is unavailable")
@@ -110,11 +143,25 @@ class _SubprocessJsonLineTransport:
         )
         self._process.stdin.flush()
 
-    def receive(self) -> dict[str, object] | None:
-        if self._process.stdout is None:
-            raise OSError("codex app-server stdout is unavailable")
-        line = self._process.stdout.readline()
-        if line == "":
+    def receive(
+        self,
+        timeout_seconds: float | None = None,
+    ) -> dict[str, object] | None:
+        if timeout_seconds is not None and timeout_seconds <= 0:
+            raise CodexAppServerTimeoutError(
+                "codex app-server receive deadline exceeded"
+            )
+        try:
+            line = self._incoming.get(timeout=timeout_seconds)
+        except queue.Empty as exc:
+            raise CodexAppServerTimeoutError(
+                "codex app-server receive deadline exceeded"
+            ) from exc
+        if isinstance(line, Exception):
+            if isinstance(line, OSError):
+                raise line
+            raise OSError(str(line) or type(line).__name__) from line
+        if line is None:
             return None
         try:
             value = json.loads(line)
@@ -144,6 +191,9 @@ class _SubprocessJsonLineTransport:
             except subprocess.TimeoutExpired:
                 process.kill()
                 process.wait(timeout=2)
+        reader = getattr(self, "_reader_thread", None)
+        if reader is not None and reader.is_alive():
+            reader.join(timeout=0.2)
 
 
 TransportFactory = Callable[[Sequence[str]], CodexJsonLineTransport]
@@ -162,6 +212,15 @@ def _require_nonempty(value: object, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise CodexAppServerProtocolError(f"{field} must be a non-empty string")
     return value
+
+
+def _require_positive_timeout(value: object, field: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{field} must be a positive finite number")
+    timeout = float(value)
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError(f"{field} must be a positive finite number")
+    return timeout
 
 
 def _bootstrap_parameters(request: ExecutionRequest) -> dict[str, str]:
@@ -295,6 +354,8 @@ class CodexAppServerAdapter:
         client_name: str = "kinotch_execution_coordinator",
         client_title: str = "KiNoTch. execution-coordinator",
         client_version: str = "0.1",
+        rpc_timeout_seconds: float = DEFAULT_RPC_TIMEOUT_SECONDS,
+        turn_timeout_seconds: float = DEFAULT_TURN_TIMEOUT_SECONDS,
     ) -> None:
         self._transport_factory = transport_factory
         self._command = tuple(command)
@@ -303,7 +364,27 @@ class CodexAppServerAdapter:
             "title": _require_nonempty(client_title, "client_title"),
             "version": _require_nonempty(client_version, "client_version"),
         }
+        self._rpc_timeout_seconds = _require_positive_timeout(
+            rpc_timeout_seconds,
+            "rpc_timeout_seconds",
+        )
+        self._turn_timeout_seconds = _require_positive_timeout(
+            turn_timeout_seconds,
+            "turn_timeout_seconds",
+        )
         self._sessions: dict[str, _LiveSession] = {}
+
+    @staticmethod
+    def _receive_before_deadline(
+        transport: CodexJsonLineTransport,
+        deadline: float,
+    ) -> dict[str, object] | None:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise CodexAppServerTimeoutError(
+                "codex app-server receive deadline exceeded"
+            )
+        return transport.receive(remaining)
 
     def _receive_response(
         self,
@@ -311,9 +392,12 @@ class CodexAppServerAdapter:
         request_id: int,
         *,
         notifications: list[dict[str, object]] | None = None,
+        deadline: float | None = None,
     ) -> dict[str, object]:
+        if deadline is None:
+            deadline = time.monotonic() + self._rpc_timeout_seconds
         while True:
-            message = transport.receive()
+            message = self._receive_before_deadline(transport, deadline)
             if message is None:
                 raise EOFError("codex app-server closed before RPC response")
             if "id" not in message:
@@ -372,7 +456,12 @@ class CodexAppServerAdapter:
 
         try:
             self._initialize(transport)
-        except (OSError, EOFError, CodexAppServerProtocolError) as exc:
+        except (
+            OSError,
+            EOFError,
+            CodexAppServerProtocolError,
+            CodexAppServerTimeoutError,
+        ) as exc:
             transport.close()
             return DispatchOutcome.failed(
                 request_id=request.request_id,
@@ -411,7 +500,7 @@ class CodexAppServerAdapter:
                 reason=str(exc),
                 schema_version=request.schema_version,
             )
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, CodexAppServerTimeoutError) as exc:
             transport.close()
             return DispatchOutcome.ambiguous(
                 request_id=request.request_id,
@@ -476,6 +565,7 @@ class CodexAppServerAdapter:
         rpc_id = session.next_request_id
         session.next_request_id += 1
         pending_notifications: list[dict[str, object]] = []
+        turn_deadline = time.monotonic() + self._turn_timeout_seconds
         try:
             session.transport.send(
                 {
@@ -491,6 +581,7 @@ class CodexAppServerAdapter:
                 session.transport,
                 rpc_id,
                 notifications=pending_notifications,
+                deadline=turn_deadline,
             )
             turn_id = _turn_id(result)
             session.active_turn_id = turn_id
@@ -509,8 +600,9 @@ class CodexAppServerAdapter:
                 status=CodexTurnStatus.AMBIGUOUS,
                 reason=str(exc),
             )
-        except (OSError, EOFError) as exc:
+        except (OSError, EOFError, CodexAppServerTimeoutError) as exc:
             session.reconciliation_required = True
+            session.transport.close()
             return CodexTurnResult(
                 thread_id=session.context.thread_id,
                 turn_id=None,
@@ -529,7 +621,10 @@ class CodexAppServerAdapter:
                     return terminal
 
             while True:
-                message = session.transport.receive()
+                message = self._receive_before_deadline(
+                    session.transport,
+                    turn_deadline,
+                )
                 if message is None:
                     session.reconciliation_required = True
                     return CodexTurnResult(
@@ -545,6 +640,15 @@ class CodexAppServerAdapter:
                 )
                 if terminal is not None:
                     return terminal
+        except CodexAppServerTimeoutError as exc:
+            session.reconciliation_required = True
+            session.transport.close()
+            return CodexTurnResult(
+                thread_id=session.context.thread_id,
+                turn_id=turn_id,
+                status=CodexTurnStatus.AMBIGUOUS,
+                reason=str(exc),
+            )
         except CodexAppServerProtocolError:
             session.reconciliation_required = True
             raise
