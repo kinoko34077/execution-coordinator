@@ -97,11 +97,32 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("permission-pull-requests: write", text)
         self.assertIn("permission-issues: write", text)
 
+    def test_auto_launch_reviewer_does_not_mint_or_use_write_app_token(self) -> None:
+        text = self._auto_launch_text()
+        token = text.index("name: Mint target GitHub App token")
+        checkout = text.index("name: Checkout selected target")
+        token_block = text[token:checkout]
+        self.assertIn("steps.offer.outputs.role != 'reviewer'", token_block)
+
+        checkout_end = text.index("name: Probe exact launcher environment")
+        checkout_block = text[checkout:checkout_end]
+        self.assertIn("steps.offer.outputs.role == 'reviewer'", checkout_block)
+        self.assertIn("secrets.COORDINATOR_READ_TOKEN", checkout_block)
+        self.assertIn("steps.app-token.outputs.token", checkout_block)
+
+        config = text.index("name: Check human-gated provider configuration")
+        config_end = text.index("name: Mint target GitHub App token")
+        config_block = text[config:config_end]
+        self.assertIn('target_access_ready = read_ready if role == "reviewer" else app_ready', config_block)
+
     def test_auto_launch_target_checkout_never_persists_provider_visible_credentials(self) -> None:
         text = self._auto_launch_text()
         self.assertIn("name: Checkout selected target", text)
         self.assertIn("repository: ${{ steps.offer.outputs.target_repository }}", text)
-        self.assertIn("token: ${{ steps.app-token.outputs.token }}", text)
+        self.assertIn(
+            "token: ${{ steps.offer.outputs.role == 'reviewer' && secrets.COORDINATOR_READ_TOKEN || steps.app-token.outputs.token }}",
+            text,
+        )
         self.assertIn("persist-credentials: false", text)
 
     def test_auto_launch_preflight_does_not_invent_shell_or_network_capability_for_claude(self) -> None:
