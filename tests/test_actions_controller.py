@@ -86,6 +86,32 @@ class ActionsControllerTests(unittest.TestCase):
             self.assertTrue((Path(tmp) / "offer.json").exists())
         self.assertEqual(before, store.body)
 
+    def test_prepare_offer_can_select_reviewer_and_emits_exact_checkout_ref(self) -> None:
+        control, task, reader = self._fixture()
+        review_read = _review_read()
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            with patch(
+                "execution_coordinator.actions_controller.read_portfolio_runtime",
+                return_value=review_read,
+            ):
+                result = prepare_offer(
+                    (control,),
+                    issue_reader=reader,
+                    state_reader=_Store(),
+                    now=NOW,
+                    context_dir=root,
+                )
+
+            self.assertTrue(result["has_offer"])
+            self.assertEqual("reviewer", result["role"])
+            self.assertEqual(12, result["review_pr_number"])
+            self.assertEqual("a" * 40, result["review_pr_head_sha"])
+            self.assertEqual("a" * 40, result["checkout_ref"])
+            offer_text = (root / "offer.json").read_text(encoding="utf-8")
+            self.assertIn('"pr_number": 12', offer_text)
+            self.assertIn('"pr_head_sha": "' + "a" * 40 + '"', offer_text)
+
     def test_no_offer_or_missing_preflight_never_claims(self) -> None:
         blocked, task, _ = _portfolio_control(
             "owner/a", 201, 8, next_action="`[HUMAN_GATE] decide`"
