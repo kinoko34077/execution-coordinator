@@ -28,6 +28,7 @@
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
+- `src/execution_coordinator/codex_app_server.py` — accepted Stage-C Codex app-server transport for caller-supplied `ACCESS_TOKEN`, fixed-deadline RPC/turn handling, typed FAILED/AMBIGUOUS outcomes, and bounded subprocess cleanup; it does not own OAuth/token acquisition or provider E2E.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
