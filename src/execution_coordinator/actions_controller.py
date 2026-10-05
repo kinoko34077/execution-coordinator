@@ -418,9 +418,14 @@ def accept_and_claim(
     uuid_factory: Callable[[], UUID] = uuid4,
 ) -> dict[str, Any]:
     offer = _offer_from_dict(_read_json(context_dir / "offer.json"))
-    provider_ready = all(
-        preflight.get(name) is True
-        for name in ("github_app_ready", "wif_ready", "repository_checkout")
+    target_access_ready = preflight.get("target_access_ready")
+    if target_access_ready is None:
+        # Backward compatibility for accepted controller-v1 implementer preflight.
+        target_access_ready = preflight.get("github_app_ready")
+    provider_ready = (
+        target_access_ready is True
+        and preflight.get("wif_ready") is True
+        and preflight.get("repository_checkout") is True
     )
     if not provider_ready:
         return {"result": OfferResponseCode.REQUIRES_USER_AUTHORITY.value, "claim_id": None}
