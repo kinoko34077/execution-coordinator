@@ -69,6 +69,8 @@ jobs:
         id: config
         if: steps.offer.outputs.has_offer == 'true'
         env:
+          ROLE: ${{ steps.offer.outputs.role }}
+          READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
           APP_CLIENT_ID: ${{ vars.AUTONOMOUS_GITHUB_APP_CLIENT_ID }}
           APP_PRIVATE_KEY: ${{ secrets.AUTONOMOUS_GITHUB_APP_PRIVATE_KEY }}
           ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
@@ -77,7 +79,10 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          role = os.environ.get("ROLE", "")
+          read_ready = bool(os.environ.get("READ_TOKEN"))
           app_ready = bool(os.environ.get("APP_CLIENT_ID") and os.environ.get("APP_PRIVATE_KEY"))
+          target_access_ready = read_ready if role == "reviewer" else app_ready
           wif_ready = all(
               os.environ.get(name)
               for name in (
@@ -86,18 +91,21 @@ jobs:
                   "ANTHROPIC_SERVICE_ACCOUNT_ID",
               )
           )
+          config_ready = target_access_ready and wif_ready
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"app_ready={'true' if app_ready else 'false'}\n")
+              output.write(f"read_ready={'true' if read_ready else 'false'}\n")
+              output.write(f"target_access_ready={'true' if target_access_ready else 'false'}\n")
               output.write(f"wif_ready={'true' if wif_ready else 'false'}\n")
-              output.write(f"config_ready={'true' if app_ready and wif_ready else 'false'}\n")
-          if not (app_ready and wif_ready):
+              output.write(f"config_ready={'true' if config_ready else 'false'}\n")
+          if not config_ready:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                  summary.write("REQUIRES_USER_AUTHORITY: approved GitHub App and/or Anthropic OIDC configuration is absent. No claim will be attempted.\n")
+                  summary.write("REQUIRES_USER_AUTHORITY: approved read/write target access and/or Anthropic OIDC configuration for this role is absent. No claim will be attempted.\n")
           PY
 
       - name: Mint target GitHub App token
         id: app-token
-        if: steps.offer.outputs.has_offer == 'true' && steps.config.outputs.config_ready == 'true'
+        if: steps.offer.outputs.has_offer == 'true' && steps.offer.outputs.role != 'reviewer' && steps.config.outputs.config_ready == 'true'
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -111,12 +119,12 @@ jobs:
 
       - name: Checkout selected target
         id: target-checkout
-        if: steps.offer.outputs.has_offer == 'true' && steps.app-token.outcome == 'success'
+        if: steps.offer.outputs.has_offer == 'true' && steps.config.outputs.config_ready == 'true' && (steps.offer.outputs.role == 'reviewer' || steps.app-token.outcome == 'success')
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.offer.outputs.target_repository }}
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.offer.outputs.role == 'reviewer' && secrets.COORDINATOR_READ_TOKEN || steps.app-token.outputs.token }}
           path: target
           ref: ${{ steps.offer.outputs.checkout_ref }}
           fetch-depth: 1
@@ -126,6 +134,8 @@ jobs:
         id: preflight
         if: steps.offer.outputs.has_offer == 'true'
         env:
+          ROLE: ${{ steps.offer.outputs.role }}
+          TARGET_ACCESS_READY: ${{ steps.config.outputs.target_access_ready }}
           APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
           APP_TOKEN_VALUE: ${{ steps.app-token.outputs.token }}
           TARGET_CHECKOUT_OUTCOME: ${{ steps.target-checkout.outcome }}
@@ -139,7 +149,9 @@ jobs:
           from pathlib import Path
 
           target = Path(os.environ["TARGET_DIR"])
+          role = os.environ.get("ROLE", "")
           app_ready = os.environ.get("APP_TOKEN_OUTCOME") == "success" and bool(os.environ.get("APP_TOKEN_VALUE"))
+          target_access_ready = os.environ.get("TARGET_ACCESS_READY") == "true"
           checkout_ready = os.environ.get("TARGET_CHECKOUT_OUTCOME") == "success" and (target / ".git").exists()
           wif_ready = os.environ.get("WIF_READY") == "true"
 
@@ -171,6 +183,8 @@ jobs:
 
           payload = {
               "github_app_ready": app_ready,
+              "target_access_ready": target_access_ready,
+              "role": role,
               "wif_ready": wif_ready,
               "repository_checkout": checkout_ready,
               "capabilities": capabilities,
