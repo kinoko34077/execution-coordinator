@@ -70,6 +70,11 @@ def candidate_fingerprint(candidate: ClaimCandidate) -> str:
         "blocked": candidate.blocked,
         "requires_user_confirmation": candidate.requires_user_confirmation,
     }
+    if candidate.review_pr_number is not None:
+        payload["review_context"] = {
+            "pr_number": candidate.review_pr_number,
+            "pr_head_sha": candidate.review_pr_head_sha,
+        }
     encoded = json.dumps(
         payload,
         sort_keys=True,
