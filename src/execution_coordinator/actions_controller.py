@@ -371,15 +371,36 @@ def prepare_offer(
         worker_id="controller-auto-v1",
         now=now,
     )
-    offer = select_controller_offer(read)
+    offer = select_controller_offer(
+        read,
+        supported_roles=frozenset({Role.IMPLEMENTER, Role.REVIEWER}),
+    )
     offer_path = context_dir / "offer.json"
     if offer is None:
         if offer_path.exists():
             offer_path.unlink()
-        return {"has_offer": False, "target_repository": "", "target_issue": ""}
+        return {
+            "has_offer": False,
+            "target_repository": "",
+            "target_issue": "",
+            "role": "",
+            "review_pr_number": "",
+            "review_pr_head_sha": "",
+            "checkout_ref": "",
+        }
     repository, issue = _task_parts(offer.task)
     _write_json(offer_path, _offer_dict(offer))
-    return {"has_offer": True, "target_repository": repository, "target_issue": issue}
+    return {
+        "has_offer": True,
+        "target_repository": repository,
+        "target_issue": issue,
+        "role": offer.role.value,
+        "review_pr_number": offer.review_pr_number,
+        "review_pr_head_sha": offer.review_pr_head_sha,
+        "checkout_ref": (
+            offer.review_pr_head_sha if offer.role is Role.REVIEWER else ""
+        ),
+    }
 
 
 def accept_and_claim(
