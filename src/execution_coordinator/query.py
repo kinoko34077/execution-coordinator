@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 from dataclasses import dataclass
 from datetime import datetime
@@ -48,6 +49,29 @@ class ClaimCandidate:
     scope_ready: bool = True
     blocked: bool = False
     requires_user_confirmation: bool = False
+    review_pr_number: int | None = None
+    review_pr_head_sha: str | None = None
+
+    def __post_init__(self) -> None:
+        has_number = self.review_pr_number is not None
+        has_head = self.review_pr_head_sha is not None
+        if has_number != has_head:
+            raise ValueError("review PR context requires both pr_number and pr_head_sha")
+        if not has_number:
+            return
+        if self.role is not Role.REVIEWER:
+            raise ValueError("review PR context is valid only for reviewer candidates")
+        if (
+            not isinstance(self.review_pr_number, int)
+            or isinstance(self.review_pr_number, bool)
+            or self.review_pr_number < 1
+        ):
+            raise ValueError("review_pr_number must be a positive integer")
+        if (
+            not isinstance(self.review_pr_head_sha, str)
+            or re.fullmatch(r"[0-9a-f]{40}", self.review_pr_head_sha) is None
+        ):
+            raise ValueError("review_pr_head_sha must be a lowercase full commit SHA")
 
 
 class ClaimabilityReason(StrEnum):
