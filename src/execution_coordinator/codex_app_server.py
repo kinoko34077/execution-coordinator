@@ -194,6 +194,12 @@ class _SubprocessJsonLineTransport:
         reader = getattr(self, "_reader_thread", None)
         if reader is not None and reader.is_alive():
             reader.join(timeout=0.2)
+        stdout = process.stdout
+        if stdout is not None and not stdout.closed:
+            try:
+                stdout.close()
+            except OSError:
+                pass
 
 
 TransportFactory = Callable[[Sequence[str]], CodexJsonLineTransport]
