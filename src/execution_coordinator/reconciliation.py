@@ -340,6 +340,8 @@ def _parse_publication(
         scope_ready=True,
         blocked=False,
         requires_user_confirmation=False,
+        review_pr_number=context["pr_number"] if role is Role.REVIEWER else None,
+        review_pr_head_sha=context["pr_head_sha"] if role is Role.REVIEWER else None,
     )
 
 
