@@ -484,6 +484,8 @@ class CodexAppServerAdapterTests(unittest.TestCase):
 
         self.assertIsNotNone(transport._process.poll())
         self.assertFalse(transport._reader_thread.is_alive())
+        self.assertIsNotNone(transport._process.stdout)
+        self.assertTrue(transport._process.stdout.closed)
 
 if __name__ == "__main__":
     unittest.main()
