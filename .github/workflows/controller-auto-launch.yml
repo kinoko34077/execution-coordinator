@@ -118,6 +118,7 @@ jobs:
           repository: ${{ steps.offer.outputs.target_repository }}
           token: ${{ steps.app-token.outputs.token }}
           path: target
+          ref: ${{ steps.offer.outputs.checkout_ref }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -197,14 +198,24 @@ jobs:
             --base-sha "${{ steps.preflight.outputs.base_sha }}" \
             --attempt-id "controller-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-      - name: Prepare claimed target branch and isolated Claude config
+      - name: Prepare role-aware target context and isolated Claude config
         if: steps.claim.outputs.result == 'ACCEPTED'
         env:
+          ROLE: ${{ steps.claim.outputs.role }}
           BRANCH: ${{ steps.claim.outputs.branch }}
           BASE_SHA: ${{ steps.preflight.outputs.base_sha }}
+          REVIEW_HEAD: ${{ steps.claim.outputs.review_pr_head_sha }}
         run: |
-          git -C "$TARGET_DIR" switch -c "$BRANCH" "$BASE_SHA"
+          set -euo pipefail
           printf '{"mcpServers":{}}\n' > "$CONTEXT_DIR/empty-mcp.json"
+          if [ "$ROLE" = "reviewer" ]; then
+            ACTUAL_HEAD=$(git -C "$TARGET_DIR" rev-parse HEAD)
+            test -n "$REVIEW_HEAD"
+            test "$ACTUAL_HEAD" = "$REVIEW_HEAD"
+            test -z "$(git -C "$TARGET_DIR" status --porcelain)"
+          else
+            git -C "$TARGET_DIR" switch -c "$BRANCH" "$BASE_SHA"
+          fi
 
       - name: Bootstrap Claude execution context
         id: claude-bootstrap
@@ -275,9 +286,9 @@ jobs:
             --bootstrap-result "$CONTEXT_DIR/bootstrap-result.json" \
             --evidence-ref "actions:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:bootstrap"
 
-      - name: Run bounded Claude repository work
-        id: claude-work
-        if: steps.reconcile.outputs.state == 'RUNNING'
+      - name: Run bounded Claude implementation work
+        id: claude-implement
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer'
         continue-on-error: true
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
@@ -297,9 +308,30 @@ jobs:
             --permission-mode acceptEdits
             --max-turns 8
 
+      - name: Run bounded Claude review work
+        id: claude-review
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role == 'reviewer'
+        continue-on-error: true
+        uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'
+        with:
+          prompt_file: ${{ github.workspace }}/.controller-auto-launch/work-prompt.txt
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          claude_args: >-
+            --safe-mode
+            --strict-mcp-config
+            --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
+            --resume "${{ steps.claim.outputs.session_id }}"
+            --tools "Read"
+            --max-turns 8
+
       - name: Deterministic target integration
         id: integrate
-        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claude-work.outcome == 'success'
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer' && steps.claude-implement.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -342,11 +374,46 @@ jobs:
             echo "pr_url=$PR_URL"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate review-only result
+        id: review-evidence
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role == 'reviewer' && steps.claude-review.outcome == 'success'
+        env:
+          REVIEW_PR_NUMBER: ${{ steps.claim.outputs.review_pr_number }}
+          REVIEW_HEAD: ${{ steps.claim.outputs.review_pr_head_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_HEAD=$(git -C "$TARGET_DIR" rev-parse HEAD)
+          test -n "$REVIEW_PR_NUMBER"
+          test -n "$REVIEW_HEAD"
+          test "$ACTUAL_HEAD" = "$REVIEW_HEAD"
+          test -z "$(git -C "$TARGET_DIR" status --porcelain)"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = {
+              "schema_version": "controller-review-execution-evidence.v1",
+              "role": "reviewer",
+              "pr_number": int(os.environ["REVIEW_PR_NUMBER"]),
+              "reviewed_commit": os.environ["REVIEW_HEAD"],
+              "repository_diff": False,
+              "github_review_submitted": False,
+          }
+          path = Path(os.environ["CONTEXT_DIR"]) / "review-execution-evidence.json"
+          path.write_text(json.dumps(evidence, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Build bounded work result
         id: work-result
         if: always() && steps.reconcile.outputs.state == 'RUNNING'
         env:
-          CLAUDE_OUTCOME: ${{ steps.claude-work.outcome }}
+          ROLE: ${{ steps.claim.outputs.role }}
+          IMPLEMENT_OUTCOME: ${{ steps.claude-implement.outcome }}
+          REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
+          REVIEW_EVIDENCE_OUTCOME: ${{ steps.review-evidence.outcome }}
+          REVIEW_PR_NUMBER: ${{ steps.claim.outputs.review_pr_number }}
+          REVIEW_HEAD: ${{ steps.claim.outputs.review_pr_head_sha }}
           INTEGRATION_OUTCOME: ${{ steps.integrate.outcome }}
           HAS_DIFF: ${{ steps.integrate.outputs.has_diff }}
           PR_URL: ${{ steps.integrate.outputs.pr_url }}
@@ -356,18 +423,35 @@ jobs:
           import os
           from pathlib import Path
 
-          claude = os.environ.get("CLAUDE_OUTCOME", "")
-          integration = os.environ.get("INTEGRATION_OUTCOME", "")
-          if claude != "success":
-              result = {"status": "failed", "reason": f"Claude work action outcome={claude or 'unknown'}"}
-          elif integration != "success":
-              result = {"status": "failed", "reason": f"deterministic integration outcome={integration or 'unknown'}"}
+          role = os.environ.get("ROLE", "")
+          if role == "reviewer":
+              review = os.environ.get("REVIEW_OUTCOME", "")
+              evidence = os.environ.get("REVIEW_EVIDENCE_OUTCOME", "")
+              if review != "success":
+                  result = {"status": "failed", "reason": f"Claude review action outcome={review or 'unknown'}"}
+              elif evidence != "success":
+                  result = {"status": "failed", "reason": f"review-only evidence outcome={evidence or 'unknown'}"}
+              else:
+                  result = {
+                      "status": "success",
+                      "review_evidence_only": True,
+                      "pr_number": int(os.environ["REVIEW_PR_NUMBER"]),
+                      "reviewed_commit": os.environ["REVIEW_HEAD"],
+                      "github_review_submitted": False,
+                  }
           else:
-              result = {
-                  "status": "success",
-                  "has_diff": os.environ.get("HAS_DIFF") == "true",
-                  "pr_url": os.environ.get("PR_URL") or None,
-              }
+              implementation = os.environ.get("IMPLEMENT_OUTCOME", "")
+              integration = os.environ.get("INTEGRATION_OUTCOME", "")
+              if implementation != "success":
+                  result = {"status": "failed", "reason": f"Claude work action outcome={implementation or 'unknown'}"}
+              elif integration != "success":
+                  result = {"status": "failed", "reason": f"deterministic integration outcome={integration or 'unknown'}"}
+              else:
+                  result = {
+                      "status": "success",
+                      "has_diff": os.environ.get("HAS_DIFF") == "true",
+                      "pr_url": os.environ.get("PR_URL") or None,
+                  }
           path = Path(os.environ["CONTEXT_DIR"]) / "work-result.json"
           path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -375,7 +459,7 @@ jobs:
           PY
 
       - name: Record failed work checkpoint
-        if: always() && steps.reconcile.outputs.state == 'RUNNING' && steps.work-result.outputs.status == 'failed'
+        if: always() && steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer' && steps.work-result.outputs.status == 'failed'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
