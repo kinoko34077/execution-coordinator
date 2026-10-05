@@ -130,9 +130,11 @@ class WorkflowContractTests(unittest.TestCase):
 
         bootstrap = text.index("id: claude-bootstrap")
         reconcile = text.index("reconcile-bootstrap")
-        work = text.index("id: claude-work")
+        implement = text.index("id: claude-implement")
+        review = text.index("id: claude-review")
         self.assertLess(bootstrap, reconcile)
-        self.assertLess(reconcile, work)
+        self.assertLess(reconcile, implement)
+        self.assertLess(reconcile, review)
 
         bootstrap_block = text[bootstrap:reconcile]
         self.assertIn("--safe-mode", bootstrap_block)
@@ -141,22 +143,60 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn("--max-turns 1", bootstrap_block)
         self.assertIn("--session-id", bootstrap_block)
 
-        work_block_end = text.find("\n      - name:", work)
-        if work_block_end == -1:
-            work_block_end = len(text)
-        work_block = text[work:work_block_end]
-        self.assertIn("steps.reconcile.outputs.state == 'RUNNING'", work_block)
-        self.assertIn("--safe-mode", work_block)
-        self.assertNotIn("--bare", work_block)
-        self.assertIn("--resume", work_block)
-        self.assertIn('--tools "Read,Edit,Write"', work_block)
-        self.assertNotIn("Bash", work_block)
-        self.assertNotIn("GITHUB_TOKEN", work_block)
-        self.assertNotIn("steps.app-token.outputs.token", work_block)
+        implement_end = text.find("\n      - name:", implement)
+        implement_block = text[implement:implement_end]
+        self.assertIn("steps.claim.outputs.role != 'reviewer'", implement_block)
+        self.assertIn("steps.reconcile.outputs.state == 'RUNNING'", implement_block)
+        self.assertIn("--safe-mode", implement_block)
+        self.assertNotIn("--bare", implement_block)
+        self.assertIn("--resume", implement_block)
+        self.assertIn('--tools "Read,Edit,Write"', implement_block)
+        self.assertNotIn("Bash", implement_block)
+        self.assertNotIn("GITHUB_TOKEN", implement_block)
+        self.assertNotIn("steps.app-token.outputs.token", implement_block)
+
+        review_end = text.find("\n      - name:", review)
+        review_block = text[review:review_end]
+        self.assertIn("steps.claim.outputs.role == 'reviewer'", review_block)
+        self.assertIn("--safe-mode", review_block)
+        self.assertIn("--resume", review_block)
+        self.assertIn('--tools "Read"', review_block)
+        self.assertNotIn("Edit", review_block)
+        self.assertNotIn("Write", review_block)
+        self.assertNotIn("Bash", review_block)
+        self.assertNotIn("steps.app-token.outputs.token", review_block)
+
+    def test_auto_launch_reviewer_path_is_exact_head_and_evidence_only(self) -> None:
+        text = self._auto_launch_text()
+        checkout = text.index("name: Checkout selected target")
+        preflight = text.index("name: Probe exact launcher environment")
+        self.assertIn("ref: ${{ steps.offer.outputs.checkout_ref }}", text[checkout:preflight])
+
+        prepare = text.index("name: Prepare role-aware target context")
+        bootstrap = text.index("name: Bootstrap Claude execution context")
+        prepare_block = text[prepare:bootstrap]
+        self.assertIn('if [ "$ROLE" = "reviewer" ]', prepare_block)
+        self.assertIn('test "$ACTUAL_HEAD" = "$REVIEW_HEAD"', prepare_block)
+        self.assertIn('status --porcelain', prepare_block)
+
+        review = text.index("id: claude-review")
+        integration = text.index("id: integrate")
+        review_evidence = text.index("id: review-evidence")
+        self.assertLess(review, review_evidence)
+        integration_header = text[integration:text.find("\n        run:", integration)]
+        self.assertIn("steps.claim.outputs.role != 'reviewer'", integration_header)
+
+        evidence_end = text.find("\n      - name:", review_evidence)
+        evidence_block = text[review_evidence:evidence_end]
+        self.assertIn('test "$ACTUAL_HEAD" = "$REVIEW_HEAD"', evidence_block)
+        self.assertIn('status --porcelain', evidence_block)
+        self.assertIn('"github_review_submitted": False', evidence_block)
+        for forbidden in ("git commit", "git push", "gh pr create", "gh issue comment"):
+            self.assertNotIn(forbidden, evidence_block)
 
     def test_auto_launch_post_work_github_mutation_is_deterministic_and_finalized(self) -> None:
         text = self._auto_launch_text()
-        work = text.index("id: claude-work")
+        work = text.index("id: claude-implement")
         commit = text.index("git commit")
         push = text.index("git push")
         pr = text.index("gh pr create --draft")
