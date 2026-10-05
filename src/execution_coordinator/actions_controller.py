@@ -78,6 +78,14 @@ def _offer_dict(offer: ControllerOffer) -> dict[str, Any]:
         "required_capabilities": sorted(offer.required_capabilities),
         "required_environment": sorted(offer.required_environment),
         "conflict_keys": list(offer.conflict_keys),
+        "review_context": (
+            {
+                "pr_number": offer.review_pr_number,
+                "pr_head_sha": offer.review_pr_head_sha,
+            }
+            if offer.review_pr_number is not None
+            else None
+        ),
         "risk": offer.risk,
         "authority_requirements": list(offer.authority_requirements),
     }
@@ -96,6 +104,16 @@ def _offer_from_dict(value: dict[str, Any]) -> ControllerOffer:
         required_capabilities=frozenset(value.get("required_capabilities", ())),
         required_environment=frozenset(value.get("required_environment", ())),
         conflict_keys=tuple(value.get("conflict_keys", ())),
+        review_pr_number=(
+            value.get("review_context", {}).get("pr_number")
+            if isinstance(value.get("review_context"), dict)
+            else None
+        ),
+        review_pr_head_sha=(
+            value.get("review_context", {}).get("pr_head_sha")
+            if isinstance(value.get("review_context"), dict)
+            else None
+        ),
         risk=value.get("risk"),
         authority_requirements=tuple(value.get("authority_requirements", ())),
     )
