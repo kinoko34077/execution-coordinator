@@ -15,7 +15,8 @@ from execution_coordinator.actions_controller import (
     reconcile_bootstrap,
 )
 from execution_coordinator.agent import AgentSession
-from execution_coordinator.controller_offer import select_controller_offer
+from execution_coordinator.capability import CapabilityMatch
+from execution_coordinator.controller_offer import OfferResponseCode, select_controller_offer
 from execution_coordinator.model import ExecutionState, Role
 from execution_coordinator.pull_request_read import PullRequestSnapshot
 from tests.test_controller_offer import _review_read
@@ -188,10 +189,6 @@ class ActionsControllerTests(unittest.TestCase):
             )
         )
 
-        def fake_runtime(_controls, *, issue_reader, **_kwargs):
-            issue_reader.read_issue("owner/a", 8)
-            return review_read
-
         tmp = tempfile.TemporaryDirectory()
         root = Path(tmp.name)
         import json
@@ -199,9 +196,16 @@ class ActionsControllerTests(unittest.TestCase):
             json.dumps(_offer_dict(offer)),
             encoding="utf-8",
         )
+        expected_uuid = UUID("12345678-1234-5678-9234-567812345678")
+        expected_worker = "claude-" + str(expected_uuid).replace("-", "")
+        match = CapabilityMatch(
+            candidate=review_read.ranked.ranked[0].candidate,
+            requirements=review_read.requirements[0],
+            worker_id=expected_worker,
+        )
         with patch(
-            "execution_coordinator.actions_controller.read_portfolio_runtime",
-            side_effect=fake_runtime,
+            "execution_coordinator.actions_controller.evaluate_controller_offer",
+            return_value=(OfferResponseCode.ACCEPTED, match),
         ):
             result = accept_and_claim(
                 (control,),
@@ -217,7 +221,7 @@ class ActionsControllerTests(unittest.TestCase):
                 base_sha=base_sha,
                 attempt_id="review-run-1",
                 pull_request_reader=pull_reader if include_reader else None,
-                uuid_factory=lambda: UUID("12345678-1234-5678-9234-567812345678"),
+                uuid_factory=lambda: expected_uuid,
             )
         return tmp, root, gateway, pull_reader, result
 
