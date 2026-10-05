@@ -2,22 +2,37 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import timedelta
 from pathlib import Path
 from uuid import UUID
 
 from execution_coordinator.actions_controller import (
+    _offer_dict,
     accept_and_claim,
     finalize_work,
     prepare_offer,
     reconcile_bootstrap,
 )
 from execution_coordinator.agent import AgentSession
+from execution_coordinator.controller_offer import select_controller_offer
 from execution_coordinator.model import ExecutionState, Role
+from execution_coordinator.pull_request_read import PullRequestSnapshot
+from tests.test_controller_offer import _review_read
 from execution_coordinator.runtime_maintenance import expire_stale_claims
 from execution_coordinator.snapshot import parse_issue_body
 from tests.test_agent import _Gateway
 from tests.test_bootstrap_pickup import NOW, _Reader, _Store, _doc, _portfolio_control
+
+
+class _PullReader:
+    def __init__(self, snapshot):
+        self.snapshot = snapshot
+        self.calls = []
+
+    def read_pull_request(self, repository, pull_number):
+        self.calls.append((repository, pull_number))
+        return self.snapshot
 
 
 class ActionsControllerTests(unittest.TestCase):
@@ -148,6 +163,112 @@ class ActionsControllerTests(unittest.TestCase):
             self.assertNotIn("github_pat_", prompt)
             self.assertIn(str(expected_uuid), context)
             self.assertTrue((root / "execution-request.json").exists())
+
+    def _run_reviewer_accept(self, *, pull_state="open", pull_head=None, base_sha=None, include_reader=True):
+        control, task, reader = self._fixture()
+        gateway = _Gateway(now=NOW)
+        review_read = _review_read()
+        offer = select_controller_offer(
+            review_read,
+            supported_roles=frozenset({Role.REVIEWER}),
+        )
+        self.assertIsNotNone(offer)
+        assert offer is not None
+        expected_head = offer.review_pr_head_sha
+        assert expected_head is not None
+        pull_head = pull_head or expected_head
+        base_sha = base_sha or expected_head
+        pull_reader = _PullReader(
+            PullRequestSnapshot(
+                repository="owner/a",
+                number=12,
+                state=pull_state,
+                head_sha=pull_head,
+                html_url="https://github.com/owner/a/pull/12",
+            )
+        )
+
+        def fake_runtime(_controls, *, issue_reader, **_kwargs):
+            issue_reader.read_issue("owner/a", 8)
+            return review_read
+
+        tmp = tempfile.TemporaryDirectory()
+        root = Path(tmp.name)
+        import json
+        (root / "offer.json").write_text(
+            json.dumps(_offer_dict(offer)),
+            encoding="utf-8",
+        )
+        with patch(
+            "execution_coordinator.actions_controller.read_portfolio_runtime",
+            side_effect=fake_runtime,
+        ):
+            result = accept_and_claim(
+                (control,),
+                issue_reader=reader,
+                state_reader=gateway.store,
+                gateway=gateway,
+                now=NOW,
+                context_dir=root,
+                preflight=self._preflight(
+                    capabilities=["repo-checkout"],
+                    environment=["linux"],
+                ),
+                base_sha=base_sha,
+                attempt_id="review-run-1",
+                pull_request_reader=pull_reader if include_reader else None,
+                uuid_factory=lambda: UUID("12345678-1234-5678-9234-567812345678"),
+            )
+        return tmp, root, gateway, pull_reader, result
+
+    def test_reviewer_exact_pr_head_is_revalidated_before_claim_and_uses_review_prompt(self) -> None:
+        tmp, root, gateway, pull_reader, result = self._run_reviewer_accept()
+        try:
+            self.assertEqual("ACCEPTED", result["result"])
+            self.assertEqual(["claim"], [call[0] for call in gateway.calls])
+            self.assertEqual([("owner/a", 12)], pull_reader.calls)
+            self.assertEqual("reviewer", result["role"])
+            self.assertEqual(12, result["review_pr_number"])
+            self.assertEqual("a" * 40, result["review_pr_head_sha"])
+            prompt = (root / "work-prompt.txt").read_text(encoding="utf-8")
+            self.assertIn("Review the exact pull request head", prompt)
+            self.assertIn("reviewed_commit: " + "a" * 40, prompt)
+            self.assertIn("Do not modify repository files", prompt)
+            self.assertNotIn("Implement the bounded owning task", prompt)
+            context = (root / "launch-context.json").read_text(encoding="utf-8")
+            self.assertIn('"pr_number": 12', context)
+            self.assertIn('"pr_head_sha": "' + "a" * 40 + '"', context)
+        finally:
+            tmp.cleanup()
+
+    def test_reviewer_stale_or_closed_pr_fails_before_claim(self) -> None:
+        for state, head in (("open", "b" * 40), ("closed", "a" * 40)):
+            with self.subTest(state=state, head=head[:1]):
+                tmp, root, gateway, _pull_reader, result = self._run_reviewer_accept(
+                    pull_state=state,
+                    pull_head=head,
+                )
+                try:
+                    self.assertEqual("DEFERRED_BUSY", result["result"])
+                    self.assertEqual([], gateway.calls)
+                    self.assertFalse((root / "work-prompt.txt").exists())
+                finally:
+                    tmp.cleanup()
+
+    def test_reviewer_missing_reader_or_wrong_checkout_sha_fails_before_claim(self) -> None:
+        cases = (
+            {"include_reader": False},
+            {"base_sha": "b" * 40},
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                tmp, root, gateway, _pull_reader, result = self._run_reviewer_accept(**case)
+                try:
+                    self.assertEqual("DEFERRED_BUSY", result["result"])
+                    self.assertEqual([], gateway.calls)
+                    self.assertFalse((root / "work-prompt.txt").exists())
+                finally:
+                    tmp.cleanup()
 
     def test_bootstrap_reconciliation_and_finalize_use_runtime_lifecycle(self) -> None:
         control, task, reader = self._fixture()
