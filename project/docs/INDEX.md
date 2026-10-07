@@ -29,6 +29,8 @@
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
 - `src/execution_coordinator/codex_app_server.py` — accepted Stage-C Codex app-server transport for caller-supplied `ACCESS_TOKEN`, fixed-deadline RPC/turn handling, typed FAILED/AMBIGUOUS outcomes, and bounded subprocess cleanup; it does not own OAuth/token acquisition or provider E2E.
+- `src/execution_coordinator/actions_controller.py` — accepted Stage-D role-aware Actions controller path, including exact reviewer PR/head offer context, live review-target revalidation, reviewer/implementer isolation, and bounded claim/launch context.
+- `src/execution_coordinator/pull_request_read.py` — read-only exact GitHub Pull Request snapshot boundary used for Stage-D identity/state/head fencing.
 - `src/execution_coordinator/mutate.py` — serialized mutation CLI/transaction entrypoint.
 - `.github/workflows/mutate-state.yml` — global GitHub Actions mutation lane on default main.
 - `.github/workflows/verify.yml` — deterministic unit/contract/compile verification.
@@ -84,6 +86,17 @@
 ## Phase 5 provider-independent execution-request boundary
 
 - Issue #68 — typed `ExecutionRequest` / `DispatchOutcome` boundary over an already acknowledged `RUNNING` claim: exact evidence/freshness binding, explicit capability/environment and bootstrap context, launch accepted/unavailable/failed outcomes, and pre-acknowledge reconciliation evidence. No provider adapter, scheduler, controller, repo-monitor or second authority.
+
+## Stage C provider transport
+
+- Issue #110 / merged PR #119 — accepted Codex app-server transport using caller-supplied `ACCESS_TOKEN`; Issue #116 subprocess stdout cleanup is included. Post-main Verify `37386388521` SUCCESS. OAuth/token acquisition/storage/rotation and real provider-backed E2E remain outside the adapter.
+
+## Stage D reviewer-role auto-launch
+
+- Issue #121 / merged PR #122 — accepted exact-head reviewer launch path with structured PR/head context, live PR/head fencing before claim, read-only reviewer checkout/tooling, implementer-path isolation, and context-less reviewer pre-offer rejection.
+- Repair exact head `2615dbd6001b949dc2d38198a926dd84251905cd`; PR Verify `37615896078` SUCCESS; same-system Review `5441949882` clean; different-system Codex `gpt-6-astra` Review `5442040496` blocking findings 0; merge `a7044cd4098aa1d8f8f385f7250d626b7b61c41a`; post-main Verify `37619042288` SUCCESS.
+- Human reports GitHub App / Claude OIDC external identity configuration complete, but real Claude/OIDC provider-backed E2E remains a separate unaccepted security/environment gate.
+
 
 ## Future follow-up candidate
 
