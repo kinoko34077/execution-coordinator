@@ -88,6 +88,10 @@ def select_controller_offer(
         candidate = ranked.candidate
         if candidate.role not in roles:
             continue
+        if candidate.role is Role.REVIEWER and (
+            candidate.review_pr_number is None or candidate.review_pr_head_sha is None
+        ):
+            continue
         requirement = requirements.get((candidate.task, candidate.role))
         if requirement is None:
             continue
