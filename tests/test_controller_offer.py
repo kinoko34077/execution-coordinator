@@ -60,13 +60,13 @@ def _read(*, store=None, ready_at=None):
     ), store
 
 
-def _review_read():
+def _review_read(*, review_pr_number=12, review_pr_head_sha="a" * 40):
     candidate = ClaimCandidate(
         task="owner/a#8",
         role=Role.REVIEWER,
         entry_ref="https://github.com/owner/a/issues/8",
-        review_pr_number=12,
-        review_pr_head_sha="a" * 40,
+        review_pr_number=review_pr_number,
+        review_pr_head_sha=review_pr_head_sha,
     )
     fingerprint = candidate_fingerprint(candidate)
     metadata = RankingMetadata(
@@ -144,6 +144,16 @@ class ControllerOfferTests(unittest.TestCase):
         self.assertEqual(Role.REVIEWER, offer.role)
         self.assertEqual(12, offer.review_pr_number)
         self.assertEqual("a" * 40, offer.review_pr_head_sha)
+
+    def test_reviewer_without_structured_pr_context_is_not_offered(self) -> None:
+        read = _review_read(review_pr_number=None, review_pr_head_sha=None)
+
+        self.assertIsNone(
+            select_controller_offer(
+                read,
+                supported_roles=frozenset({Role.REVIEWER}),
+            )
+        )
 
     def test_exact_match_accepts_but_never_claims(self) -> None:
         read, store = _read()
