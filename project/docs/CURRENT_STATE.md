@@ -2,11 +2,11 @@
 
 ## Repository state
 
-`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + MANUAL PICKUP EXPIRY SELF-HEAL + REVIEWER PROVENANCE PICKUP ELIGIBILITY + PROVIDER-INDEPENDENT REQUEST BOUNDARY + CODEX APP-SERVER STAGE-C TRANSPORT / ACCEPTED`
+`V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + MANUAL PICKUP EXPIRY SELF-HEAL + REVIEWER PROVENANCE PICKUP ELIGIBILITY + PROVIDER-INDEPENDENT REQUEST BOUNDARY + CODEX APP-SERVER STAGE-C TRANSPORT + STAGE-D REVIEWER-ROLE AUTO-LAUNCH / ACCEPTED`
 
 `execution-coordinator` is the runtime implementation boundary for devflow Execution Coordination Protocol v1. Durable task truth remains in devflow and owning repository Issues/PRs; this repository owns only short-lived execution coordination plus read-only discovery/runtime/eligibility projections.
 
-The accepted implementation baseline through Issue #49 / PR #51 is `a0def11e8089139d933f1a405a8dabae46a28678`. The moving repository Audit SHA is owned by devflow Control #107 so this document does not self-reference later documentation-only reconciliation merges.
+The accepted runtime implementation now includes Stage-D reviewer-role auto-launch through Issue #121 / merged PR #122 on main `a7044cd4098aa1d8f8f385f7250d626b7b61c41a`. The moving repository Audit SHA is owned by devflow Control #107 so this document does not self-reference later documentation-only reconciliation merges.
 
 Cross-repository authority:
 - devflow Work Order #105 owns the broader multi-agent execution-coordination objective and explicit release of bounded downstream slices;
@@ -33,6 +33,7 @@ Cross-repository authority:
 - Issue #113 / merged PR #114 own the accepted multi-track portfolio eligibility repair: overall Control `Work Status=BLOCKED` is not a repository-wide veto when an explicit candidate is independently unblocked and repository-/Control-wide hard gates remain clear;
 - Issue #110 / merged PR #119 own the accepted Codex app-server Stage-C provider transport using caller-supplied `ACCESS_TOKEN` through the inherited environment boundary; OAuth/token acquisition/storage/rotation and provider E2E remain outside this adapter;
 - Issue #116 is completed inside PR #119: subprocess stdout is explicitly released after child termination and bounded reader join, with deterministic real-subprocess coverage;
+- Issue #121 / merged PR #122 own accepted Stage-D reviewer-role auto-launch: exact structured reviewer PR/head context, live PR/head revalidation before claim, reviewer-only read credential/tooling, no implementer integration path, and pre-offer rejection of reviewers lacking structured context;
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
@@ -404,13 +405,7 @@ controller run 36550418568 also succeeded through stale-claim expiry and offer
 preparation, returning `has_offer: false` with no claim or repository mutation.
 Runtime Issue #3 remained `claims: {}`.
 
-A real Claude/OIDC provider E2E remains blocked on explicit Human configuration:
-`AUTONOMOUS_GITHUB_APP_CLIENT_ID`, `AUTONOMOUS_GITHUB_APP_PRIVATE_KEY`,
-`ANTHROPIC_FEDERATION_RULE_ID`, `ANTHROPIC_ORGANIZATION_ID`, and
-`ANTHROPIC_SERVICE_ACCOUNT_ID` are currently absent. Their absence is an
-operational Human Gate, not authority to synthesize or broaden credentials.
-Adoption remains `PILOT`, and devflow #188/#105 PARK is not released solely by
-the no-offer controller pilot.
+The external GitHub App / Claude OIDC identity configuration is Human-reported complete as of 2026-10-07. Credential values remain Human-owned and are not recorded here. A real Claude/OIDC provider-backed E2E has still not been accepted or executed as part of Stage D; it remains a separate security/environment gate and must not be inferred from configuration presence alone. Adoption remains `PILOT`, and devflow #188/#105 PARK is not released solely by controller/provider setup.
 
 ### Stage 1 work-class runtime propagation
 
@@ -568,8 +563,31 @@ Current v0.1 also uses bounded idempotency retention, one coarse global mutation
 - #87/#88 controller-first acceptance, #89/#90 Stage 1 runtime acceptance, #94/#95/#97/#98 transport acceptance, and #105/#106 reviewer-provenance acceptance do not release real provider identity configuration, adoption expansion, or devflow #188/#105 PARK;
 - devflow Stage 2 is accepted through S2.8; the first bounded Stage-3 rotation is accepted at 3/3 under completed #302; Stage 4 evidence owner #307 concluded `NOT_NEEDED`; completed pilot items are retired from supply and current runnable lightweight supply is none.
 
+### Stage D reviewer-role auto-launch acceptance
+
+Issue #121 / merged PR #122 establish the accepted Stage-D reviewer execution path.
+
+Accepted behavior:
+- reviewer demand is launchable only with exact structured `review_pr_number` and `review_pr_head_sha`; context-less reviewer candidates are filtered before `ControllerOffer` creation;
+- reviewer target checkout is pinned to the published exact PR head and the live PR identity/state/head is re-read immediately before claim;
+- stale, moved, closed, missing, or mismatched review targets fail closed before claim continuation;
+- reviewer checkout uses the existing read-only `COORDINATOR_READ_TOKEN`; the write-capable GitHub App token remains implementer-only;
+- reviewer Claude execution exposes `Read` only and cannot enter deterministic implementer commit/push/draft-PR/Issue-comment integration;
+- reviewer completion produces bounded review evidence only and does not itself submit or infer a GitHub Review.
+
+Accepted evidence:
+- repair exact head `2615dbd6001b949dc2d38198a926dd84251905cd`;
+- PR-head Verify `37615896078`: SUCCESS;
+- same-system Formal Review `5441949882`: blocking findings none;
+- different-system Codex `gpt-6-astra` Formal Review `5442040496`: blocking findings 0 and the prior structured-context blocker confirmed resolved;
+- prior blocking review thread resolved after the repaired exact-head review;
+- squash merge `a7044cd4098aa1d8f8f385f7250d626b7b61c41a`;
+- post-main Verify `37619042288`: SUCCESS.
+
+Stage D acceptance does not prove real Claude/OIDC provider-backed E2E. Human reports the external identity configuration is present, but provider E2E remains a separate later gate.
+
 ## Next action
 
 Controller-first GitHub Actions auto-launch v1 (#87/#88), Stage 1 work-class runtime propagation (#89/#90), Issue-comment pickup transport (#94/#95/#97/#98), manual expiry self-heal (#101/#102), and reviewer-provenance pickup eligibility (#105/#106) are accepted. The moving accepted-main SHA remains owned by devflow Control #107 rather than this document.
 
-Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. A real Claude/OIDC provider E2E remains blocked on explicit Human-owned external identity configuration; agents must not synthesize or change those credential/session/permission inputs. Adoption remains `PILOT` and devflow #188/#105 PARK remains unreleased. The lightweight-work rollout is accepted through the first Stage-3 3/3 cycle, with Stage 4 `NOT_NEEDED`; standing future supply remains governed by devflow #209. Provider-adapter Stage C under devflow #250 is now accepted through Issue #110 / PR #119 on main `4f5070fd0b93a6e28b0fb17374a5ee1bfb49e22f`. The user-authorized caller-supplied `ACCESS_TOKEN` boundary was re-applied from the preserved reviewed candidate, #116's stdout-resource cleanup was folded into the same exact-head candidate, PR-head Verify and current-head same-system + Claude Code different-system reviews were clean, and post-main Verify `37386388521` succeeded. The adapter still does not acquire, refresh, persist or rotate credentials and does not perform provider-backed E2E. Stage D remains separately unreleased; the original Claude/OIDC real-provider Human Gate remains unchanged.
+Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. Stage C and Stage D are accepted on main through `a7044cd4098aa1d8f8f385f7250d626b7b61c41a`; the accepted implementation still does not acquire, refresh, persist or rotate credentials. Human reports the external GitHub App / Claude OIDC identity configuration is complete, but real provider-backed E2E remains separately unaccepted and must not be synthesized or run across its security/environment boundary without the applicable authority. Adoption remains `PILOT` and devflow #188/#105 PARK remains unreleased. The lightweight-work rollout is accepted through the first Stage-3 3/3 cycle, with Stage 4 `NOT_NEEDED`; standing future supply remains governed by devflow #209.
