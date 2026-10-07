@@ -1,0 +1,117 @@
+{
+  "schema_version": "maintenance-catalog.v1",
+  "repository": "kinoko34077/execution-coordinator",
+  "baseline": "maintenance-common-baseline.v1",
+  "rollout": "PILOT",
+  "risk_profile": "CRITICAL",
+  "scope_risk_overrides": [
+    {
+      "scope": {
+        "kind": "component",
+        "selector": "provider-subprocess-resource-lifecycle"
+      },
+      "risk": "HIGH"
+    },
+    {
+      "scope": {
+        "kind": "component",
+        "selector": "project-current-state-runtime-projection"
+      },
+      "risk": "HIGH"
+    }
+  ],
+  "repository_lenses": [],
+  "common_slot_overrides": [],
+  "repository_slots": [
+    {
+      "slot_id": "runtime.claim-fencing",
+      "title": "Claim, lease, generation, and fencing integrity",
+      "lifecycle": "ACTIVE",
+      "scope": {
+        "kind": "runtime_boundary",
+        "selector": "execution-coordination-state"
+      },
+      "lens": "state-integrity-concurrency",
+      "coverage_key": "execution-coordinator.runtime.claim-fencing",
+      "cadence_class": "GENERAL",
+      "minimum_depth": "STANDARD",
+      "external_freshness_class": "FAST",
+      "description": "Check claim, acknowledge, lease, generation, conflict-key, expiry, takeover, and fencing invariants against the serialized runtime authority."
+    },
+    {
+      "slot_id": "provider.outcome-fencing",
+      "title": "Provider failure, timeout, and ambiguous outcome fencing",
+      "lifecycle": "ACTIVE",
+      "scope": {
+        "kind": "component",
+        "selector": "provider-dispatch-outcome"
+      },
+      "lens": "error-handling",
+      "coverage_key": "execution-coordinator.provider.outcome-fencing",
+      "cadence_class": "GENERAL",
+      "minimum_depth": "STANDARD",
+      "external_freshness_class": "FAST",
+      "description": "Check provider unavailable, failed, timeout, and ambiguous transport outcomes for fail-closed authority handling and explicit reconciliation evidence."
+    },
+    {
+      "slot_id": "resource.cleanup",
+      "title": "Provider subprocess resource cleanup",
+      "lifecycle": "ACTIVE",
+      "scope": {
+        "kind": "component",
+        "selector": "provider-subprocess-resource-lifecycle"
+      },
+      "lens": "resource-management",
+      "coverage_key": "execution-coordinator.resource.cleanup",
+      "cadence_class": "GENERAL",
+      "minimum_depth": "STANDARD",
+      "external_freshness_class": "NORMAL",
+      "description": "Check bounded subprocess termination, stdout/resource release, reader joins, and cleanup behavior without provider-backed execution."
+    },
+    {
+      "slot_id": "reviewer.provenance",
+      "title": "Reviewer provenance and independence integrity",
+      "lifecycle": "ACTIVE",
+      "scope": {
+        "kind": "component",
+        "selector": "reviewer-provenance-pickup"
+      },
+      "lens": "state-integrity-concurrency",
+      "coverage_key": "execution-coordinator.reviewer.provenance",
+      "cadence_class": "GENERAL",
+      "minimum_depth": "STANDARD",
+      "external_freshness_class": "FAST",
+      "description": "Check exact reviewer PR/head context, provenance propagation, reviewer independence, and pre-offer fail-closed eligibility."
+    },
+    {
+      "slot_id": "security.credential-transport",
+      "title": "Credential transport and security boundary",
+      "lifecycle": "ACTIVE",
+      "scope": {
+        "kind": "component",
+        "selector": "credential-transport-boundary"
+      },
+      "lens": "security",
+      "coverage_key": "execution-coordinator.security.credential-transport",
+      "cadence_class": "SECURITY",
+      "minimum_depth": "STANDARD",
+      "external_freshness_class": "FAST",
+      "description": "Check caller-supplied credential transport, read/write token boundaries, workflow permissions, redaction, and Human-gated credential/session/permission exclusions."
+    },
+    {
+      "slot_id": "current-state.runtime-consistency",
+      "title": "Current State and runtime claim consistency",
+      "lifecycle": "ACTIVE",
+      "scope": {
+        "kind": "component",
+        "selector": "project-current-state-runtime-projection"
+      },
+      "lens": "spec-implementation-drift",
+      "coverage_key": "execution-coordinator.current-state.runtime-consistency",
+      "cadence_class": "GENERAL",
+      "minimum_depth": "STANDARD",
+      "external_freshness_class": "NORMAL",
+      "description": "Check project Current State and Control projections against accepted main and volatile runtime claim authority without freezing live claim state into documentation."
+    }
+  ]
+}
