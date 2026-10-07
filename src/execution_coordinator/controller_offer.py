@@ -34,6 +34,8 @@ class ControllerOffer:
     required_capabilities: frozenset[str]
     required_environment: frozenset[str]
     conflict_keys: tuple[str, ...]
+    review_pr_number: int | None = None
+    review_pr_head_sha: str | None = None
     risk: str | None = None
     authority_requirements: tuple[str, ...] = ()
 
@@ -49,6 +51,25 @@ class ControllerOffer:
         object.__setattr__(self, "required_capabilities", frozenset(self.required_capabilities))
         object.__setattr__(self, "required_environment", frozenset(self.required_environment))
         object.__setattr__(self, "conflict_keys", tuple(self.conflict_keys))
+        has_review_number = self.review_pr_number is not None
+        has_review_head = self.review_pr_head_sha is not None
+        if has_review_number != has_review_head:
+            raise ValueError("review offer context requires both pr_number and pr_head_sha")
+        if has_review_number:
+            if self.role is not Role.REVIEWER:
+                raise ValueError("review offer context is valid only for reviewer offers")
+            if (
+                not isinstance(self.review_pr_number, int)
+                or isinstance(self.review_pr_number, bool)
+                or self.review_pr_number < 1
+            ):
+                raise ValueError("review_pr_number must be a positive integer")
+            if (
+                not isinstance(self.review_pr_head_sha, str)
+                or len(self.review_pr_head_sha) != 40
+                or any(ch not in "0123456789abcdef" for ch in self.review_pr_head_sha)
+            ):
+                raise ValueError("review_pr_head_sha must be a lowercase full commit SHA")
         object.__setattr__(self, "authority_requirements", tuple(self.authority_requirements))
 
 
@@ -67,6 +88,10 @@ def select_controller_offer(
         candidate = ranked.candidate
         if candidate.role not in roles:
             continue
+        if candidate.role is Role.REVIEWER and (
+            candidate.review_pr_number is None or candidate.review_pr_head_sha is None
+        ):
+            continue
         requirement = requirements.get((candidate.task, candidate.role))
         if requirement is None:
             continue
@@ -82,6 +107,8 @@ def select_controller_offer(
             required_capabilities=requirement.required_capabilities,
             required_environment=requirement.required_environment,
             conflict_keys=candidate.conflict_keys,
+            review_pr_number=candidate.review_pr_number,
+            review_pr_head_sha=candidate.review_pr_head_sha,
             authority_requirements=(),
         )
     return None

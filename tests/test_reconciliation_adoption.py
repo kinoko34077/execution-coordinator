@@ -9,6 +9,7 @@ from execution_coordinator.discovery import DurableIssueSource, IssueDocument
 from execution_coordinator.engine import ClaimConflict, claim
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.query import list_claimable
+from execution_coordinator.ranking import candidate_fingerprint
 from execution_coordinator.reconciliation import (
     MARKER_BEGIN,
     MARKER_END,
@@ -165,10 +166,33 @@ class ReconciliationAdoptionTests(unittest.TestCase):
         self.assertEqual(candidate.role, Role.REVIEWER)
         self.assertEqual(candidate.entry_ref, f"https://github.com/{REPOSITORY}/issues/7")
         self.assertEqual(candidate.conflict_keys, ())
+        self.assertEqual(12, candidate.review_pr_number)
+        self.assertEqual("a" * 40, candidate.review_pr_head_sha)
         self.assertTrue(candidate.scope_ready)
         self.assertFalse(candidate.blocked)
         self.assertFalse(candidate.requires_user_confirmation)
         self.assertEqual(list_claimable((candidate,), CoordinatorState.empty()), (candidate,))
+
+    def test_reviewer_candidate_fingerprint_changes_with_exact_pr_head(self) -> None:
+        first_publication = _publication("reviewer")
+        first = discover_reconciliation_claim_candidates(
+            (CONTROL_SOURCE,),
+            _Reader(_control_document([first_publication]), _task_document()),
+        ).candidates[0]
+
+        second_publication = _publication("reviewer")
+        second_context = dict(second_publication["context"])
+        second_context["pr_head_sha"] = "b" * 40
+        second_publication["context"] = second_context
+        second_publication["publication_id"] = _publication_id(second_publication)
+        second = discover_reconciliation_claim_candidates(
+            (CONTROL_SOURCE,),
+            _Reader(_control_document([second_publication]), _task_document()),
+        ).candidates[0]
+
+        self.assertEqual(first.task, second.task)
+        self.assertEqual(first.role, second.role)
+        self.assertNotEqual(candidate_fingerprint(first), candidate_fingerprint(second))
 
     def test_recovery_publication_maps_to_recovery_role_and_round_trips_snapshot(self) -> None:
         reader = _Reader(_control_document([_publication("recovery")]), _task_document())

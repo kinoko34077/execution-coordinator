@@ -3,7 +3,11 @@ from __future__ import annotations
 import unittest
 from datetime import timedelta
 
-from execution_coordinator.capability import CAPABILITY_SCHEMA_VERSION, WorkerProfile
+from execution_coordinator.capability import (
+    CAPABILITY_SCHEMA_VERSION,
+    CandidateRequirements,
+    WorkerProfile,
+)
 from execution_coordinator.controller_offer import (
     CONTROLLER_OFFER_SCHEMA_VERSION,
     OfferResponseCode,
@@ -11,7 +15,17 @@ from execution_coordinator.controller_offer import (
     select_controller_offer,
 )
 from execution_coordinator.model import Role
-from execution_coordinator.portfolio_runtime import read_portfolio_runtime
+from execution_coordinator.query import ClaimCandidate
+from execution_coordinator.ranking import (
+    RANKING_SCHEMA_VERSION,
+    ControlPriority,
+    RankedCandidate,
+    RankedFrontierResult,
+    RankingMetadata,
+    ReadinessClass,
+    candidate_fingerprint,
+)
+from execution_coordinator.portfolio_runtime import PortfolioRuntimeRead, read_portfolio_runtime
 from tests.test_bootstrap_pickup import (
     NOW,
     _Gateway,
@@ -46,6 +60,57 @@ def _read(*, store=None, ready_at=None):
     ), store
 
 
+def _review_read(*, review_pr_number=12, review_pr_head_sha="a" * 40):
+    candidate = ClaimCandidate(
+        task="owner/a#8",
+        role=Role.REVIEWER,
+        entry_ref="https://github.com/owner/a/issues/8",
+        review_pr_number=review_pr_number,
+        review_pr_head_sha=review_pr_head_sha,
+    )
+    fingerprint = candidate_fingerprint(candidate)
+    metadata = RankingMetadata(
+        schema_version=RANKING_SCHEMA_VERSION,
+        source_ref="kinoko34077/devflow#201",
+        task=candidate.task,
+        role=candidate.role,
+        candidate_fingerprint=fingerprint,
+        control_priority=ControlPriority.P1,
+        controller_urgency=None,
+        dependency_ready=True,
+        dependency_order=8,
+        readiness_class=ReadinessClass.REVIEW,
+        ready_at=None,
+        observed_at=NOW - timedelta(minutes=1),
+        fresh_until=NOW + timedelta(minutes=10),
+    )
+    ranked = RankedFrontierResult(
+        ranked=(RankedCandidate(candidate=candidate, metadata=metadata, rank_key=(1,)),),
+        recovery_candidates=(),
+        omissions=(),
+        source_failures=(),
+        discovery_failures=(),
+    )
+    requirements = CandidateRequirements(
+        schema_version=CAPABILITY_SCHEMA_VERSION,
+        source_ref="kinoko34077/devflow#201",
+        task=candidate.task,
+        role=candidate.role,
+        candidate_fingerprint=fingerprint,
+        required_capabilities=frozenset({"repo-checkout"}),
+        required_environment=frozenset({"linux"}),
+        observed_at=NOW - timedelta(minutes=1),
+        fresh_until=NOW + timedelta(minutes=10),
+    )
+    return PortfolioRuntimeRead(
+        observed_at=NOW,
+        frontier=None,  # select_controller_offer does not consume frontier evidence.
+        ranked=ranked,
+        requirements=(requirements,),
+        complete=True,
+    )
+
+
 class ControllerOfferTests(unittest.TestCase):
     def test_selects_at_most_one_best_supported_offer_without_mutation(self) -> None:
         read, store = _read()
@@ -63,6 +128,31 @@ class ControllerOfferTests(unittest.TestCase):
         self.assertEqual(before, store.body)
         self.assertIsNone(
             select_controller_offer(read, supported_roles=frozenset({Role.REVIEWER}))
+        )
+
+    def test_explicit_reviewer_selection_carries_exact_pr_head_context(self) -> None:
+        read = _review_read()
+
+        self.assertIsNone(select_controller_offer(read))
+        offer = select_controller_offer(
+            read,
+            supported_roles=frozenset({Role.REVIEWER}),
+        )
+
+        self.assertIsNotNone(offer)
+        assert offer is not None
+        self.assertEqual(Role.REVIEWER, offer.role)
+        self.assertEqual(12, offer.review_pr_number)
+        self.assertEqual("a" * 40, offer.review_pr_head_sha)
+
+    def test_reviewer_without_structured_pr_context_is_not_offered(self) -> None:
+        read = _review_read(review_pr_number=None, review_pr_head_sha=None)
+
+        self.assertIsNone(
+            select_controller_offer(
+                read,
+                supported_roles=frozenset({Role.REVIEWER}),
+            )
         )
 
     def test_exact_match_accepts_but_never_claims(self) -> None:

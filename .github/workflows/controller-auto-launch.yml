@@ -69,6 +69,8 @@ jobs:
         id: config
         if: steps.offer.outputs.has_offer == 'true'
         env:
+          ROLE: ${{ steps.offer.outputs.role }}
+          READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
           APP_CLIENT_ID: ${{ vars.AUTONOMOUS_GITHUB_APP_CLIENT_ID }}
           APP_PRIVATE_KEY: ${{ secrets.AUTONOMOUS_GITHUB_APP_PRIVATE_KEY }}
           ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
@@ -77,7 +79,10 @@ jobs:
         run: |
           python - <<'PY'
           import os
+          role = os.environ.get("ROLE", "")
+          read_ready = bool(os.environ.get("READ_TOKEN"))
           app_ready = bool(os.environ.get("APP_CLIENT_ID") and os.environ.get("APP_PRIVATE_KEY"))
+          target_access_ready = read_ready if role == "reviewer" else app_ready
           wif_ready = all(
               os.environ.get(name)
               for name in (
@@ -86,18 +91,21 @@ jobs:
                   "ANTHROPIC_SERVICE_ACCOUNT_ID",
               )
           )
+          config_ready = target_access_ready and wif_ready
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
               output.write(f"app_ready={'true' if app_ready else 'false'}\n")
+              output.write(f"read_ready={'true' if read_ready else 'false'}\n")
+              output.write(f"target_access_ready={'true' if target_access_ready else 'false'}\n")
               output.write(f"wif_ready={'true' if wif_ready else 'false'}\n")
-              output.write(f"config_ready={'true' if app_ready and wif_ready else 'false'}\n")
-          if not (app_ready and wif_ready):
+              output.write(f"config_ready={'true' if config_ready else 'false'}\n")
+          if not config_ready:
               with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as summary:
-                  summary.write("REQUIRES_USER_AUTHORITY: approved GitHub App and/or Anthropic OIDC configuration is absent. No claim will be attempted.\n")
+                  summary.write("REQUIRES_USER_AUTHORITY: approved read/write target access and/or Anthropic OIDC configuration for this role is absent. No claim will be attempted.\n")
           PY
 
       - name: Mint target GitHub App token
         id: app-token
-        if: steps.offer.outputs.has_offer == 'true' && steps.config.outputs.config_ready == 'true'
+        if: steps.offer.outputs.has_offer == 'true' && steps.offer.outputs.role != 'reviewer' && steps.config.outputs.config_ready == 'true'
         continue-on-error: true
         uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3
         with:
@@ -111,13 +119,14 @@ jobs:
 
       - name: Checkout selected target
         id: target-checkout
-        if: steps.offer.outputs.has_offer == 'true' && steps.app-token.outcome == 'success'
+        if: steps.offer.outputs.has_offer == 'true' && steps.config.outputs.config_ready == 'true' && (steps.offer.outputs.role == 'reviewer' || steps.app-token.outcome == 'success')
         continue-on-error: true
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           repository: ${{ steps.offer.outputs.target_repository }}
-          token: ${{ steps.app-token.outputs.token }}
+          token: ${{ steps.offer.outputs.role == 'reviewer' && secrets.COORDINATOR_READ_TOKEN || steps.app-token.outputs.token }}
           path: target
+          ref: ${{ steps.offer.outputs.checkout_ref }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -125,6 +134,8 @@ jobs:
         id: preflight
         if: steps.offer.outputs.has_offer == 'true'
         env:
+          ROLE: ${{ steps.offer.outputs.role }}
+          TARGET_ACCESS_READY: ${{ steps.config.outputs.target_access_ready }}
           APP_TOKEN_OUTCOME: ${{ steps.app-token.outcome }}
           APP_TOKEN_VALUE: ${{ steps.app-token.outputs.token }}
           TARGET_CHECKOUT_OUTCOME: ${{ steps.target-checkout.outcome }}
@@ -138,7 +149,9 @@ jobs:
           from pathlib import Path
 
           target = Path(os.environ["TARGET_DIR"])
+          role = os.environ.get("ROLE", "")
           app_ready = os.environ.get("APP_TOKEN_OUTCOME") == "success" and bool(os.environ.get("APP_TOKEN_VALUE"))
+          target_access_ready = os.environ.get("TARGET_ACCESS_READY") == "true"
           checkout_ready = os.environ.get("TARGET_CHECKOUT_OUTCOME") == "success" and (target / ".git").exists()
           wif_ready = os.environ.get("WIF_READY") == "true"
 
@@ -170,6 +183,8 @@ jobs:
 
           payload = {
               "github_app_ready": app_ready,
+              "target_access_ready": target_access_ready,
+              "role": role,
               "wif_ready": wif_ready,
               "repository_checkout": checkout_ready,
               "capabilities": capabilities,
@@ -197,14 +212,24 @@ jobs:
             --base-sha "${{ steps.preflight.outputs.base_sha }}" \
             --attempt-id "controller-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
-      - name: Prepare claimed target branch and isolated Claude config
+      - name: Prepare role-aware target context and isolated Claude config
         if: steps.claim.outputs.result == 'ACCEPTED'
         env:
+          ROLE: ${{ steps.claim.outputs.role }}
           BRANCH: ${{ steps.claim.outputs.branch }}
           BASE_SHA: ${{ steps.preflight.outputs.base_sha }}
+          REVIEW_HEAD: ${{ steps.claim.outputs.review_pr_head_sha }}
         run: |
-          git -C "$TARGET_DIR" switch -c "$BRANCH" "$BASE_SHA"
+          set -euo pipefail
           printf '{"mcpServers":{}}\n' > "$CONTEXT_DIR/empty-mcp.json"
+          if [ "$ROLE" = "reviewer" ]; then
+            ACTUAL_HEAD=$(git -C "$TARGET_DIR" rev-parse HEAD)
+            test -n "$REVIEW_HEAD"
+            test "$ACTUAL_HEAD" = "$REVIEW_HEAD"
+            test -z "$(git -C "$TARGET_DIR" status --porcelain)"
+          else
+            git -C "$TARGET_DIR" switch -c "$BRANCH" "$BASE_SHA"
+          fi
 
       - name: Bootstrap Claude execution context
         id: claude-bootstrap
@@ -275,9 +300,9 @@ jobs:
             --bootstrap-result "$CONTEXT_DIR/bootstrap-result.json" \
             --evidence-ref "actions:${GITHUB_RUN_ID}:${GITHUB_RUN_ATTEMPT}:bootstrap"
 
-      - name: Run bounded Claude repository work
-        id: claude-work
-        if: steps.reconcile.outputs.state == 'RUNNING'
+      - name: Run bounded Claude implementation work
+        id: claude-implement
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer'
         continue-on-error: true
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
@@ -297,9 +322,30 @@ jobs:
             --permission-mode acceptEdits
             --max-turns 8
 
+      - name: Run bounded Claude review work
+        id: claude-review
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role == 'reviewer'
+        continue-on-error: true
+        uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
+        env:
+          CLAUDE_WORKING_DIR: ${{ github.workspace }}/target
+          CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS: '1'
+        with:
+          prompt_file: ${{ github.workspace }}/.controller-auto-launch/work-prompt.txt
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          claude_args: >-
+            --safe-mode
+            --strict-mcp-config
+            --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
+            --resume "${{ steps.claim.outputs.session_id }}"
+            --tools "Read"
+            --max-turns 8
+
       - name: Deterministic target integration
         id: integrate
-        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claude-work.outcome == 'success'
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer' && steps.claude-implement.outcome == 'success'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}
@@ -342,11 +388,46 @@ jobs:
             echo "pr_url=$PR_URL"
           } >> "$GITHUB_OUTPUT"
 
+      - name: Validate review-only result
+        id: review-evidence
+        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role == 'reviewer' && steps.claude-review.outcome == 'success'
+        env:
+          REVIEW_PR_NUMBER: ${{ steps.claim.outputs.review_pr_number }}
+          REVIEW_HEAD: ${{ steps.claim.outputs.review_pr_head_sha }}
+        run: |
+          set -euo pipefail
+          ACTUAL_HEAD=$(git -C "$TARGET_DIR" rev-parse HEAD)
+          test -n "$REVIEW_PR_NUMBER"
+          test -n "$REVIEW_HEAD"
+          test "$ACTUAL_HEAD" = "$REVIEW_HEAD"
+          test -z "$(git -C "$TARGET_DIR" status --porcelain)"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          evidence = {
+              "schema_version": "controller-review-execution-evidence.v1",
+              "role": "reviewer",
+              "pr_number": int(os.environ["REVIEW_PR_NUMBER"]),
+              "reviewed_commit": os.environ["REVIEW_HEAD"],
+              "repository_diff": False,
+              "github_review_submitted": False,
+          }
+          path = Path(os.environ["CONTEXT_DIR"]) / "review-execution-evidence.json"
+          path.write_text(json.dumps(evidence, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+
       - name: Build bounded work result
         id: work-result
         if: always() && steps.reconcile.outputs.state == 'RUNNING'
         env:
-          CLAUDE_OUTCOME: ${{ steps.claude-work.outcome }}
+          ROLE: ${{ steps.claim.outputs.role }}
+          IMPLEMENT_OUTCOME: ${{ steps.claude-implement.outcome }}
+          REVIEW_OUTCOME: ${{ steps.claude-review.outcome }}
+          REVIEW_EVIDENCE_OUTCOME: ${{ steps.review-evidence.outcome }}
+          REVIEW_PR_NUMBER: ${{ steps.claim.outputs.review_pr_number }}
+          REVIEW_HEAD: ${{ steps.claim.outputs.review_pr_head_sha }}
           INTEGRATION_OUTCOME: ${{ steps.integrate.outcome }}
           HAS_DIFF: ${{ steps.integrate.outputs.has_diff }}
           PR_URL: ${{ steps.integrate.outputs.pr_url }}
@@ -356,18 +437,35 @@ jobs:
           import os
           from pathlib import Path
 
-          claude = os.environ.get("CLAUDE_OUTCOME", "")
-          integration = os.environ.get("INTEGRATION_OUTCOME", "")
-          if claude != "success":
-              result = {"status": "failed", "reason": f"Claude work action outcome={claude or 'unknown'}"}
-          elif integration != "success":
-              result = {"status": "failed", "reason": f"deterministic integration outcome={integration or 'unknown'}"}
+          role = os.environ.get("ROLE", "")
+          if role == "reviewer":
+              review = os.environ.get("REVIEW_OUTCOME", "")
+              evidence = os.environ.get("REVIEW_EVIDENCE_OUTCOME", "")
+              if review != "success":
+                  result = {"status": "failed", "reason": f"Claude review action outcome={review or 'unknown'}"}
+              elif evidence != "success":
+                  result = {"status": "failed", "reason": f"review-only evidence outcome={evidence or 'unknown'}"}
+              else:
+                  result = {
+                      "status": "success",
+                      "review_evidence_only": True,
+                      "pr_number": int(os.environ["REVIEW_PR_NUMBER"]),
+                      "reviewed_commit": os.environ["REVIEW_HEAD"],
+                      "github_review_submitted": False,
+                  }
           else:
-              result = {
-                  "status": "success",
-                  "has_diff": os.environ.get("HAS_DIFF") == "true",
-                  "pr_url": os.environ.get("PR_URL") or None,
-              }
+              implementation = os.environ.get("IMPLEMENT_OUTCOME", "")
+              integration = os.environ.get("INTEGRATION_OUTCOME", "")
+              if implementation != "success":
+                  result = {"status": "failed", "reason": f"Claude work action outcome={implementation or 'unknown'}"}
+              elif integration != "success":
+                  result = {"status": "failed", "reason": f"deterministic integration outcome={integration or 'unknown'}"}
+              else:
+                  result = {
+                      "status": "success",
+                      "has_diff": os.environ.get("HAS_DIFF") == "true",
+                      "pr_url": os.environ.get("PR_URL") or None,
+                  }
           path = Path(os.environ["CONTEXT_DIR"]) / "work-result.json"
           path.write_text(json.dumps(result, sort_keys=True) + "\n", encoding="utf-8")
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
@@ -375,7 +473,7 @@ jobs:
           PY
 
       - name: Record failed work checkpoint
-        if: always() && steps.reconcile.outputs.state == 'RUNNING' && steps.work-result.outputs.status == 'failed'
+        if: always() && steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer' && steps.work-result.outputs.status == 'failed'
         continue-on-error: true
         env:
           GH_TOKEN: ${{ steps.app-token.outputs.token }}

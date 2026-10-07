@@ -33,8 +33,10 @@ from .execution_request import (
     DispatchOutcome,
     ExecutionRequest,
 )
+from .github_state import GitHubApiError
 from .model import CoordinatorState, ExecutionState, Role, WaitReason
 from .portfolio_runtime import read_portfolio_runtime
+from .pull_request_read import PullRequestReader
 from .ranking import ControlPriority
 
 CONTEXT_SCHEMA_VERSION = "controller-auto-launch-context.v1"
@@ -78,6 +80,14 @@ def _offer_dict(offer: ControllerOffer) -> dict[str, Any]:
         "required_capabilities": sorted(offer.required_capabilities),
         "required_environment": sorted(offer.required_environment),
         "conflict_keys": list(offer.conflict_keys),
+        "review_context": (
+            {
+                "pr_number": offer.review_pr_number,
+                "pr_head_sha": offer.review_pr_head_sha,
+            }
+            if offer.review_pr_number is not None
+            else None
+        ),
         "risk": offer.risk,
         "authority_requirements": list(offer.authority_requirements),
     }
@@ -96,6 +106,16 @@ def _offer_from_dict(value: dict[str, Any]) -> ControllerOffer:
         required_capabilities=frozenset(value.get("required_capabilities", ())),
         required_environment=frozenset(value.get("required_environment", ())),
         conflict_keys=tuple(value.get("conflict_keys", ())),
+        review_pr_number=(
+            value.get("review_context", {}).get("pr_number")
+            if isinstance(value.get("review_context"), dict)
+            else None
+        ),
+        review_pr_head_sha=(
+            value.get("review_context", {}).get("pr_head_sha")
+            if isinstance(value.get("review_context"), dict)
+            else None
+        ),
         risk=value.get("risk"),
         authority_requirements=tuple(value.get("authority_requirements", ())),
     )
@@ -152,6 +172,8 @@ def _context_dict(
     branch: str,
     target_repository: str,
     target_issue: int,
+    review_pr_number: int | None = None,
+    review_pr_head_sha: str | None = None,
 ) -> dict[str, Any]:
     return {
         "schema_version": CONTEXT_SCHEMA_VERSION,
@@ -168,6 +190,14 @@ def _context_dict(
         "branch": branch,
         "target_repository": target_repository,
         "target_issue": target_issue,
+        "review_context": (
+            {
+                "pr_number": review_pr_number,
+                "pr_head_sha": review_pr_head_sha,
+            }
+            if review_pr_number is not None
+            else None
+        ),
     }
 
 
@@ -258,6 +288,73 @@ Hard boundaries:
     return prompt
 
 
+def _review_prompt(
+    *,
+    task: str,
+    task_body: str,
+    claim_id: str,
+    generation: int,
+    pr_number: int,
+    pr_head_sha: str,
+) -> str:
+    prompt = f"""Review the exact pull request head below for the bounded owning task.
+
+Owning task: {task}
+Review authority:
+- claim_id: {claim_id}
+- generation: {generation}
+- pull_request: #{pr_number}
+- reviewed_commit: {pr_head_sha}
+
+Owning Issue scope / acceptance:
+{task_body}
+
+Hard boundaries:
+- Review only the exact commit above; stop if the pull request head changes.
+- Do not modify repository files.
+- Do not create commits, branches, or pushes.
+- Do not create, update, merge, close, or reopen pull requests or Issues.
+- Do not release, deploy, or publish.
+- Do not create, read, rotate, or modify credentials, secrets, sessions, or permissions.
+- Do not rewrite shared history.
+- Return bounded review findings/evidence only; do not claim implementation completion.
+"""
+    _assert_no_secret(prompt)
+    return prompt
+
+
+def _review_target_is_current(
+    offer: ControllerOffer,
+    *,
+    pull_request_reader: PullRequestReader | None,
+    base_sha: str,
+) -> bool:
+    if offer.role is not Role.REVIEWER:
+        return True
+    if (
+        pull_request_reader is None
+        or offer.review_pr_number is None
+        or offer.review_pr_head_sha is None
+    ):
+        return False
+    if base_sha.lower() != offer.review_pr_head_sha:
+        return False
+    repository, _issue = _task_parts(offer.task)
+    try:
+        snapshot = pull_request_reader.read_pull_request(
+            repository,
+            offer.review_pr_number,
+        )
+    except (GitHubApiError, ValueError):
+        return False
+    return (
+        snapshot.repository == repository
+        and snapshot.number == offer.review_pr_number
+        and snapshot.state == "open"
+        and snapshot.head_sha == offer.review_pr_head_sha
+    )
+
+
 def prepare_offer(
     control_documents: Iterable[IssueDocument],
     *,
@@ -274,15 +371,36 @@ def prepare_offer(
         worker_id="controller-auto-v1",
         now=now,
     )
-    offer = select_controller_offer(read)
+    offer = select_controller_offer(
+        read,
+        supported_roles=frozenset({Role.IMPLEMENTER, Role.REVIEWER}),
+    )
     offer_path = context_dir / "offer.json"
     if offer is None:
         if offer_path.exists():
             offer_path.unlink()
-        return {"has_offer": False, "target_repository": "", "target_issue": ""}
+        return {
+            "has_offer": False,
+            "target_repository": "",
+            "target_issue": "",
+            "role": "",
+            "review_pr_number": "",
+            "review_pr_head_sha": "",
+            "checkout_ref": "",
+        }
     repository, issue = _task_parts(offer.task)
     _write_json(offer_path, _offer_dict(offer))
-    return {"has_offer": True, "target_repository": repository, "target_issue": issue}
+    return {
+        "has_offer": True,
+        "target_repository": repository,
+        "target_issue": issue,
+        "role": offer.role.value,
+        "review_pr_number": offer.review_pr_number,
+        "review_pr_head_sha": offer.review_pr_head_sha,
+        "checkout_ref": (
+            offer.review_pr_head_sha if offer.role is Role.REVIEWER else ""
+        ),
+    }
 
 
 def accept_and_claim(
@@ -296,12 +414,18 @@ def accept_and_claim(
     preflight: dict[str, Any],
     base_sha: str,
     attempt_id: str,
+    pull_request_reader: PullRequestReader | None = None,
     uuid_factory: Callable[[], UUID] = uuid4,
 ) -> dict[str, Any]:
     offer = _offer_from_dict(_read_json(context_dir / "offer.json"))
-    provider_ready = all(
-        preflight.get(name) is True
-        for name in ("github_app_ready", "wif_ready", "repository_checkout")
+    target_access_ready = preflight.get("target_access_ready")
+    if target_access_ready is None:
+        # Backward compatibility for accepted controller-v1 implementer preflight.
+        target_access_ready = preflight.get("github_app_ready")
+    provider_ready = (
+        target_access_ready is True
+        and preflight.get("wif_ready") is True
+        and preflight.get("repository_checkout") is True
     )
     if not provider_ready:
         return {"result": OfferResponseCode.REQUIRES_USER_AUTHORITY.value, "claim_id": None}
@@ -344,12 +468,24 @@ def accept_and_claim(
     _assert_no_secret(task_document.body)
     if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", base_sha):
         raise ValueError("base_sha must be an exact 40-hex commit SHA")
+    base_sha = base_sha.lower()
+    if not _review_target_is_current(
+        offer,
+        pull_request_reader=pull_request_reader,
+        base_sha=base_sha,
+    ):
+        return {"result": OfferResponseCode.DEFERRED_BUSY.value, "claim_id": None}
     attempt8 = hashlib.sha256(attempt_id.encode("utf-8")).hexdigest()[:8]
-    branch = f"agent/controller-{issue}-{attempt8}"
+    if offer.role is Role.REVIEWER:
+        assert offer.review_pr_number is not None
+        assert offer.review_pr_head_sha is not None
+        branch = f"review/pr-{offer.review_pr_number}-{offer.review_pr_head_sha[:8]}"
+    else:
+        branch = f"agent/controller-{issue}-{attempt8}"
     bootstrap = BootstrapContext(
         schema_version=BOOTSTRAP_CONTEXT_SCHEMA_VERSION,
         context_ref=f"github-actions:{attempt_id}",
-        base_sha=base_sha.lower(),
+        base_sha=base_sha,
         branch=branch,
         parameters=(("provider", "claude-code"), ("session_id", session_id)),
     )
@@ -362,24 +498,38 @@ def accept_and_claim(
         keys=keys,
         now=now,
     )
-    prompt = _work_prompt(
-        task=context.task,
-        task_body=task_document.body,
-        claim_id=context.claim_id,
-        generation=context.generation,
-        base_sha=base_sha.lower(),
-        branch=branch,
-    )
+    if offer.role is Role.REVIEWER:
+        assert offer.review_pr_number is not None
+        assert offer.review_pr_head_sha is not None
+        prompt = _review_prompt(
+            task=context.task,
+            task_body=task_document.body,
+            claim_id=context.claim_id,
+            generation=context.generation,
+            pr_number=offer.review_pr_number,
+            pr_head_sha=offer.review_pr_head_sha,
+        )
+    else:
+        prompt = _work_prompt(
+            task=context.task,
+            task_body=task_document.body,
+            claim_id=context.claim_id,
+            generation=context.generation,
+            base_sha=base_sha,
+            branch=branch,
+        )
     context_dir.mkdir(parents=True, exist_ok=True)
     _write_json(
         context_dir / "launch-context.json",
         _context_dict(
             context,
             expected_session_id=session_id,
-            base_sha=base_sha.lower(),
+            base_sha=base_sha,
             branch=branch,
             target_repository=repository,
             target_issue=issue,
+            review_pr_number=offer.review_pr_number,
+            review_pr_head_sha=offer.review_pr_head_sha,
         ),
     )
     _write_json(context_dir / "execution-request.json", _request_dict(request))
@@ -396,6 +546,9 @@ def accept_and_claim(
         "worker_id": worker_id,
         "branch": branch,
         "request_id": request.request_id,
+        "role": offer.role.value,
+        "review_pr_number": offer.review_pr_number,
+        "review_pr_head_sha": offer.review_pr_head_sha,
     }
 
 
@@ -533,15 +686,17 @@ def _runtime():
     from .bootstrap_pickup import list_control_documents
     from .discovery import GitHubIssueReader
     from .github_state import GitHubStateStore
+    from .pull_request_read import GitHubPullRequestReader
 
     lane_token = os.environ["GITHUB_TOKEN"]
     read_token = os.environ.get("COORDINATOR_READ_TOKEN") or lane_token
     repository = os.environ["GITHUB_REPOSITORY"]
     state = GitHubStateStore(token=lane_token, repository=repository, issue_number=3)
     reader = GitHubIssueReader(token=read_token)
+    pull_reader = GitHubPullRequestReader(token=read_token)
     controls = list_control_documents(read_token, reader)
     gateway = ActionsMutationGateway(token=lane_token, repository=repository, state_reader=state.load_body)
-    return reader, state, controls, gateway
+    return reader, pull_reader, state, controls, gateway
 
 
 def main(argv: list[str] | None = None) -> int:  # pragma: no cover - workflow integration
@@ -564,7 +719,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - workflow i
     args = parser.parse_args(argv)
 
     context_dir = Path(args.context_dir)
-    reader, state, controls, gateway = _runtime()
+    reader, pull_reader, state, controls, gateway = _runtime()
     now = datetime.now(timezone.utc).replace(microsecond=0)
     if args.command == "prepare-offer":
         result = prepare_offer(controls, issue_reader=reader, state_reader=state, now=now, context_dir=context_dir)
@@ -579,6 +734,7 @@ def main(argv: list[str] | None = None) -> int:  # pragma: no cover - workflow i
             preflight=_read_json(Path(args.preflight)),
             base_sha=args.base_sha,
             attempt_id=args.attempt_id,
+            pull_request_reader=pull_reader,
         )
     elif args.command == "reconcile-bootstrap":
         result = reconcile_bootstrap(
