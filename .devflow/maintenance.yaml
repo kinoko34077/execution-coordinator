@@ -2,7 +2,7 @@
   "schema_version": "maintenance-catalog.v1",
   "repository": "kinoko34077/execution-coordinator",
   "baseline": "maintenance-common-baseline.v1",
-  "rollout": "DISABLED",
+  "rollout": "PILOT",
   "risk_profile": "CRITICAL",
   "scope_risk_overrides": [
     {
