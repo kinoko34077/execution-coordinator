@@ -258,6 +258,7 @@ jobs:
         continue-on-error: true
         env:
           RUNNER_TEMP: ${{ runner.temp }}
+          PYTHONSAFEPATH: '1'
         run: python -m execution_coordinator.provider_failure_diagnostic
 
       - name: Normalize Claude bootstrap evidence
