@@ -252,6 +252,14 @@ jobs:
             --max-turns 1
             --session-id "${{ steps.claim.outputs.session_id }}"
 
+      - name: Classify Claude bootstrap error without sensitive output
+        if: steps.claim.outputs.result == 'ACCEPTED' && steps.claude-bootstrap.outcome == 'failure'
+        # Diagnostics cannot change the accepted reconcile/claim lifecycle.
+        continue-on-error: true
+        env:
+          RUNNER_TEMP: ${{ runner.temp }}
+        run: python -m execution_coordinator.provider_failure_diagnostic
+
       - name: Normalize Claude bootstrap evidence
         id: bootstrap-result
         if: steps.claim.outputs.result == 'ACCEPTED'
