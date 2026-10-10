@@ -45,7 +45,7 @@ def classify_execution_file(runner_temp: str | None) -> str:
         if len(raw) > MAX_EXECUTION_FILE_BYTES:
             return UNAVAILABLE
         messages = json.loads(raw)
-    except (OSError, ValueError, TypeError, UnicodeError):
+    except (OSError, ValueError, TypeError, UnicodeError, RecursionError):
         return UNAVAILABLE
 
     if not isinstance(messages, list):
