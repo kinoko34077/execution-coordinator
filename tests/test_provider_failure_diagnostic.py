@@ -134,6 +134,7 @@ class ProviderFailureDiagnosticTests(unittest.TestCase):
         self.assertIn("steps.claude-bootstrap.outcome == 'failure'", diagnostic)
         self.assertIn("steps.claim.outputs.result == 'ACCEPTED'", diagnostic)
         self.assertIn("continue-on-error: true", diagnostic)
+        self.assertIn("PYTHONSAFEPATH: '1'", diagnostic)
         self.assertIn(
             "python -m execution_coordinator.provider_failure_diagnostic", diagnostic
         )
