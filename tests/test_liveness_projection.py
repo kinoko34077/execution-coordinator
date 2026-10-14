@@ -119,7 +119,10 @@ class LivenessProjectionTests(unittest.TestCase):
             f = Path(td) / "observation.json"
             f.write_text(json.dumps(evidence()), encoding="utf-8")
             stdout = io.StringIO()
-            with patch("execution_coordinator.query._build_store_from_env") as build, redirect_stdout(stdout):
+            with patch("execution_coordinator.query._build_store_from_env") as build, \
+                 patch("execution_coordinator.query.datetime") as clock, \
+                 redirect_stdout(stdout):
+                clock.now.return_value = datetime(2026, 10, 15, 0, tzinfo=timezone.utc)
                 status = query_main(["get_liveness", "--evidence-json", str(f),
                                      "--expected-mailbox", MAILBOX])
             self.assertEqual(status, 0)
