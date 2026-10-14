@@ -109,6 +109,8 @@ class LivenessProjectionTests(unittest.TestCase):
     def test_invalid_mode_and_bad_actor(self):
         with self.assertRaises(ValueError):
             self.read(evidence(event="BECOME_CONTROLLER"))
+        with self.assertRaisesRegex(ValueError, "OBSERVATION_EVENT_INVALID"):
+            self.read(evidence(event=["MODEL_TOOL_RESPONSE_OBSERVED"]))
         with self.assertRaises(ValueError):
             self.read(evidence(reported_actor="bad[bot]"))
         with self.assertRaises(ValueError):
