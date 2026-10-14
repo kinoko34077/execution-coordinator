@@ -156,9 +156,13 @@ def plan_portable_job(
     if not _valid_recipe(recipe) or not _valid_request(request, recipe):
         return Plan("HOLD", "INVALID_RECIPE_OR_REQUEST")
     if not isinstance(evidence, RoutingEvidence) or not (
-        evidence.actions in ACTION_STATES
+        type(evidence.actions) is str
+        and evidence.actions in ACTION_STATES
+        and type(evidence.external) is str
         and evidence.external in EXTERNAL_STATES
+        and type(evidence.github_api) is str
         and evidence.github_api in REFRESH_STATES
+        and type(evidence.coordinator_claim) is str
         and evidence.coordinator_claim in REFRESH_STATES
         and type(evidence.caller_authorized) is bool
         and type(evidence.external_isolated) is bool
