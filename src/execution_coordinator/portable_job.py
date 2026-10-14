@@ -101,14 +101,24 @@ def _valid_recipe(recipe: TrustedRecipe) -> bool:
     )
 
 
+def _valid_repository(value: str) -> bool:
+    if type(value) is not str or REPOSITORY.fullmatch(value) is None:
+        return False
+    return all(part not in {".", ".."} and not part.startswith(".") for part in value.split("/"))
+
+
+def _valid_task(value: str) -> bool:
+    if type(value) is not str or TASK.fullmatch(value) is None:
+        return False
+    return _valid_repository(value.split("#", 1)[0])
+
+
 def _valid_request(request: JobRequest, recipe: TrustedRecipe) -> bool:
     if not isinstance(request, JobRequest):
         return False
     if not (
-        type(request.repository) is str
-        and REPOSITORY.fullmatch(request.repository)
-        and type(request.task_ref) is str
-        and TASK.fullmatch(request.task_ref)
+        _valid_repository(request.repository)
+        and _valid_task(request.task_ref)
         and type(request.source_sha) is str
         and SHA1.fullmatch(request.source_sha)
         and type(request.recipe_id) is str
