@@ -5,12 +5,14 @@ import json
 import os
 import re
 import sys
+from pathlib import Path
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Iterable, Protocol
 
 from .github_state import GitHubApiError, GitHubStateStore, IssueBodyRead
+from .liveness_projection import project_liveness
 from .model import (
     Claim,
     CoordinatorState,
@@ -251,14 +253,28 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Read execution-coordinator state without mutating authority"
     )
-    parser.add_argument("operation", choices=("get_state",))
+    parser.add_argument("operation", choices=("get_state", "get_liveness"))
+    parser.add_argument("--evidence-json", type=Path,
+                        help="read-only devflow producer-reported liveness JSON; no GitHub mutation")
+    parser.add_argument("--expected-mailbox",
+                        help="exact devflow owner/name#issue allowlist for get_liveness")
     args = parser.parse_args(argv)
 
     try:
-        if args.operation != "get_state":
-            raise ValueError(f"unsupported query operation: {args.operation}")
+        if args.operation == "get_liveness":
+            if args.evidence_json is None or not args.expected_mailbox:
+                raise ValueError("get_liveness requires --evidence-json and --expected-mailbox")
+            data = json.loads(args.evidence_json.read_text(encoding="utf-8"))
+            projected = project_liveness(
+                data, now=datetime.now(timezone.utc),
+                expected_mailbox=args.expected_mailbox,
+            )
+            print(json.dumps(projected, sort_keys=True))
+            return 0
+        if args.evidence_json is not None or args.expected_mailbox is not None:
+            raise ValueError("get_state does not accept liveness arguments")
         result = get_state_result(_build_store_from_env())
-    except (ValueError, GitHubApiError, RuntimeError) as exc:
+    except (ValueError, GitHubApiError, RuntimeError, OSError) as exc:
         print(f"query failed: {exc}", file=sys.stderr)
         return 2
 
