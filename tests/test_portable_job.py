@@ -161,6 +161,10 @@ class PortableJobContractTests(unittest.TestCase):
         for evidence in (
             replace(self.evidence, actions="BILLING_REJECTED_BY_SECURITY"),
             replace(self.evidence, actions=1),
+            replace(self.evidence, actions=[]),
+            replace(self.evidence, external={}),
+            replace(self.evidence, github_api=[]),
+            replace(self.evidence, coordinator_claim={}),
             replace(self.evidence, external="MAYBE"),
             replace(self.evidence, caller_authorized=1),
         ):
