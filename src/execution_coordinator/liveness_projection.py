@@ -66,7 +66,7 @@ def project_liveness(
     if any(type(data[k]) is not str or not IDENTITY.fullmatch(data[k])
            for k in ("session_id", "turn_id")):
         raise ValueError("OBSERVATION_SESSION_INVALID")
-    if data["event"] not in EVENTS:
+    if type(data["event"]) is not str or data["event"] not in EVENTS:
         raise ValueError("OBSERVATION_EVENT_INVALID")
     if type(data["reported_actor"]) is not str or not ACTOR.fullmatch(data["reported_actor"]):
         raise ValueError("OBSERVATION_ACTOR_INVALID")
