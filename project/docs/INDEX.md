@@ -2,6 +2,8 @@
 
 ## Current operational state
 
+- `GPT_LIVENESS_PROJECTION.md` — optional read-only KAEP GPT-response evidence projection, finite freshness and explicit non-authority; F5A–D adapter does not ingest GitHub comments independently.
+
 - `CURRENT_STATE.md` — accepted v0.1 runtime behavior, merged-main verification, operational smoke evidence, known limitations and next action.
 
 ## Implementation plan
