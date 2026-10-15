@@ -39,6 +39,8 @@ class TrustedRecipe:
     read_only: bool
     requires_secrets: bool
     max_seconds: int
+    # Trusted catalog only. Default tasks must be owned by the target repo.
+    task_owner_repositories: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -89,6 +91,9 @@ def _valid_recipe(recipe: TrustedRecipe) -> bool:
         and type(recipe.backends) is frozenset
         and bool(recipe.backends)
         and recipe.backends <= BACKENDS
+        and type(recipe.task_owner_repositories) is frozenset
+        and len(recipe.task_owner_repositories) <= 16
+        and all(_valid_repository(owner) for owner in recipe.task_owner_repositories)
         and type(recipe.input_schema) is dict
         and len(recipe.input_schema) <= 16
         and all(
@@ -104,7 +109,12 @@ def _valid_recipe(recipe: TrustedRecipe) -> bool:
 def _valid_repository(value: str) -> bool:
     if type(value) is not str or REPOSITORY.fullmatch(value) is None:
         return False
-    return all(part not in {".", ".."} and not part.startswith(".") for part in value.split("/"))
+    return (value == value.lower() and all(
+        part not in {".", ".."}
+        and not part.startswith((".", "-"))
+        and not part.endswith(".git")
+        for part in value.split("/")
+    ))
 
 
 def _valid_task(value: str) -> bool:
@@ -130,6 +140,9 @@ def _valid_request(request: JobRequest, recipe: TrustedRecipe) -> bool:
         and type(request.inputs) is dict
         and request.inputs.keys() == recipe.input_schema.keys()
     ):
+        return False
+    task_owner = request.task_ref.partition("#")[0]
+    if task_owner != request.repository and task_owner not in recipe.task_owner_repositories:
         return False
     for key, required in recipe.input_schema.items():
         value = request.inputs[key]
