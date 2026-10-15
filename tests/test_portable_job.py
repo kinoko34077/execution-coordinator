@@ -108,6 +108,65 @@ class PortableJobContractTests(unittest.TestCase):
             with self.subTest(recipe=altered):
                 self.assertEqual(plan_portable_job(altered, self.request, self.evidence).reason, "INVALID_RECIPE_OR_REQUEST")
 
+    def test_cross_repository_task_owner_must_be_trusted(self) -> None:
+        # A devflow Work Order can own a job in another repository, but only
+        # if the authenticated catalog permits that precise owner namespace.
+        cross_request = replace(
+            self.request,
+            repository="kinoko34077/execution-coordinator",
+            task_ref="kinoko34077/devflow#541",
+        )
+        self.assertEqual(
+            plan_portable_job(self.recipe, cross_request, self.evidence).reason,
+            "INVALID_RECIPE_OR_REQUEST",
+        )
+        trusted = replace(
+            self.recipe,
+            task_owner_repositories=frozenset({"kinoko34077/devflow"}),
+        )
+        plan = plan_portable_job(trusted, cross_request, self.evidence)
+        self.assertEqual((plan.disposition, plan.backend), ("CANDIDATE_ONLY", "github_actions"))
+        self.assertEqual(
+            plan_portable_job(
+                trusted, replace(cross_request, task_ref="evil/other#9"), self.evidence
+            ).reason,
+            "INVALID_RECIPE_OR_REQUEST",
+        )
+        self.assertEqual(
+            plan_portable_job(
+                trusted,
+                replace(cross_request, task_ref="kinoko34077/execution-coordinator#136"),
+                self.evidence,
+            ).disposition,
+            "CANDIDATE_ONLY",
+        )
+
+    def test_untrusted_task_owner_catalog_and_aliases_rejected(self) -> None:
+        for owners in (
+            frozenset({"../evil"}),
+            frozenset({"Kinoko34077/devflow"}),
+            frozenset({"kinoko34077/devflow.git"}),
+            frozenset({"-bad/devflow"}),
+            {"kinoko34077/devflow"},
+        ):
+            with self.subTest(owners=owners):
+                bad = replace(self.recipe, task_owner_repositories=owners)
+                self.assertEqual(
+                    plan_portable_job(bad, self.request, self.evidence).reason,
+                    "INVALID_RECIPE_OR_REQUEST",
+                )
+        for target, task in (
+            ("Kinoko34077/devflow", "Kinoko34077/devflow#541"),
+            ("kinoko34077/devflow.git", "kinoko34077/devflow.git#541"),
+            ("kinoko34077/-devflow", "kinoko34077/-devflow#541"),
+        ):
+            with self.subTest(target=target):
+                candidate = replace(self.request, repository=target, task_ref=task)
+                self.assertEqual(
+                    plan_portable_job(self.recipe, candidate, self.evidence).reason,
+                    "INVALID_RECIPE_OR_REQUEST",
+                )
+
     def test_exact_source_and_recipe_binding(self) -> None:
         for request in (
             replace(self.request, source_sha="main"),
