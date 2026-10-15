@@ -30,6 +30,7 @@
 - `src/execution_coordinator/capability.py` — versioned worker evidence, exact capability/environment subset matching, and worker-local omission projections.
 - `src/execution_coordinator/autonomous.py` — bounded worker-scoped first-match selection, one serialized claim, acknowledge-before-work, and existing lifecycle release/fencing.
 - `src/execution_coordinator/execution_request.py` — versioned acknowledged-claim request evidence, bootstrap context, provider-neutral launch outcomes, and explicit reconciliation requirements.
+- `src/execution_coordinator/portable_job.py` — accepted F1 non-executing portable-job recipe/request validation and deterministic candidate backend routing for devflow #541; this is not an external runner, authenticated catalog, live Claim proof or GitHub mutation path (Issue #136 / merged PR #137).
 - `src/execution_coordinator/codex_app_server.py` — accepted Stage-C Codex app-server transport for caller-supplied `ACCESS_TOKEN`, fixed-deadline RPC/turn handling, typed FAILED/AMBIGUOUS outcomes, and bounded subprocess cleanup; it does not own OAuth/token acquisition or provider E2E.
 - `src/execution_coordinator/actions_controller.py` — accepted Stage-D role-aware Actions controller path, including exact reviewer PR/head offer context, live review-target revalidation, reviewer/implementer isolation, and bounded claim/launch context.
 - `src/execution_coordinator/pull_request_read.py` — read-only exact GitHub Pull Request snapshot boundary used for Stage-D identity/state/head fencing.
