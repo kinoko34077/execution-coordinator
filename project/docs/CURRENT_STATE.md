@@ -34,6 +34,7 @@ Cross-repository authority:
 - Issue #110 / merged PR #119 own the accepted Codex app-server Stage-C provider transport using caller-supplied `ACCESS_TOKEN` through the inherited environment boundary; OAuth/token acquisition/storage/rotation and provider E2E remain outside this adapter;
 - Issue #116 is completed inside PR #119: subprocess stdout is explicitly released after child termination and bounded reader join, with deterministic real-subprocess coverage;
 - Issue #121 / merged PR #122 own accepted Stage-D reviewer-role auto-launch: exact structured reviewer PR/head context, live PR/head revalidation before claim, reviewer-only read credential/tooling, no implementer integration path, and pre-offer rejection of reviewers lacking structured context;
+- Issue #136 / merged PR #137 own the accepted F1 pure portable-job recipe/request validation and Actions-independent *candidate* backend planning, under cross-repository devflow #541; no runtime launch or credentials.
 - Issue #3 `[SYSTEM] Execution Coordination State` is runtime current state only.
 
 Runtime Issue #3 is volatile live authority. Its current claim set must be re-read from the Issue before any consumption or mutation and is not frozen into this document.
@@ -129,6 +130,16 @@ Rules:
 The adapter is not a scheduler and does not independently select or rank durable work.
 
 ## Accepted read-only projections
+
+### Portable job F1 — non-executing candidate planning
+
+[Issue #136](https://github.com/kinoko34077/execution-coordinator/issues/136) / [merged PR #137](https://github.com/kinoko34077/execution-coordinator/pull/137) add `src/execution_coordinator/portable_job.py`, a **pure, read-only** validation/planning module for the proposed account-wide execution gateway under devflow #541. The module validates pinned source SHA, recipe digest, typed fixed inputs, task-owner/target repository relationship and explicit trusted task-owner allowlists. It yields only a deterministic `CANDIDATE_ONLY` backend plan or a finite fail-closed `HOLD` reason; GitHub Actions is preferred when healthy, while an isolated external backend is a candidate only under accepted capability/outage evidence and never when Actions is policy-disabled or authority evidence is unknown.
+
+This code **does not** authenticate the caller/catalog, mint GitHub App tokens, verify a live Claim at launch, run a job, read Private repositories, deploy/host an executor, write GitHub state or move Issue #3 Claim/lease/fencing authority. The `TrustedRecipe`, `RoutingEvidence` and `Plan` data structures are caller-constructible and **must not be treated as execution authorization**. A future F2 real execution path requires a separately accepted authenticated catalog, permitted target repositories, fresh trusted authority/Claim and immutable head rechecks, single-writer Claim authority migration, isolation/cost controls and explicit applicable Human permission gates. The reusable F1 code is a candidate adapter, **not** an operative fallback or a second controller.
+
+Accepted proof: PR #137 exact reviewed HEAD `a8bb3179c8cf2c1421546f4b9431d641a67ee3cc`, native Review 5531748410 (no blocking findings), Required Verify 38717043598 SUCCESS, squash main `cf60a17728f415c65c4afa427c5073ace6f76409`, post-main Verify 38724281328 SUCCESS (**381 tests + compile**). The separate Claude Code peer audit on the reviewed head is preserved on Issue #136 and does not replace formal GitHub Review.
+
+
 
 ### `get_state`
 
