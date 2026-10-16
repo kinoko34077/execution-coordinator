@@ -122,7 +122,7 @@ class ProviderFailureDiagnosticTests(unittest.TestCase):
         self.assertIn(category, (NO_HTTP_STATUS, UNAVAILABLE))
         self.assertIsNone(status)
         output = self.run_main()
-        self.assertIn("claude_bootstrap_http_status=UNAVAILABLE\\n", output)
+        self.assertIn("claude_bootstrap_http_status=UNAVAILABLE\n", output)
         self.assertNotIn("SECRET_SENTINEL", output)
         self.assertNotIn("Traceback", output)
 
