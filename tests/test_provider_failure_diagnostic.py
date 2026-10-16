@@ -110,14 +110,26 @@ class ProviderFailureDiagnosticTests(unittest.TestCase):
         self.write(["not a message", {"type": "system", "api_error_status": 429}])
         self.assertEqual(self.classify(), NO_HTTP_STATUS)
 
-    def test_extremely_deep_json_recursion_is_unavailable(self) -> None:
-        # Prevent malformed SDK content from producing a traceback, including
-        # file paths or snippets, in the Actions failure diagnostics.
+    def test_extremely_deep_json_never_exposes_http_or_payload(self) -> None:
+        # Python 3.11 may reject 2500 nested arrays with RecursionError;
+        # Python 3.12+ may parse them successfully. Both outcomes must keep
+        # untrusted payload text and any numeric HTTP status out of the log.
         self.file.write_text(
             "[" * 2500 + '"SECRET_SENTINEL"' + "]" * 2500,
             encoding="utf-8",
         )
-        self.assertEqual(self.classify(), UNAVAILABLE)
+        error_class, status = inspect_execution_file(str(self.directory))
+        self.assertIn(error_class, (UNAVAILABLE, NO_HTTP_STATUS))
+        self.assertIsNone(status)
+        self.assertEqual(self.classify(), error_class)
+        output = self.run_main()
+        self.assertEqual(
+            output,
+            f"claude_bootstrap_error_class={error_class}\\n"
+            "claude_bootstrap_http_status=UNAVAILABLE\\n",
+        )
+        self.assertNotIn("SECRET_SENTINEL", output)
+        self.assertNotIn("Traceback", output)
 
     def test_oversized_execution_file_is_not_parsed(self) -> None:
         self.file.write_bytes(b"x" * (MAX_EXECUTION_FILE_BYTES + 1))
