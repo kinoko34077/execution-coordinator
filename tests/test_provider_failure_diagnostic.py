@@ -110,14 +110,40 @@ class ProviderFailureDiagnosticTests(unittest.TestCase):
         self.write(["not a message", {"type": "system", "api_error_status": 429}])
         self.assertEqual(self.classify(), NO_HTTP_STATUS)
 
-    def test_extremely_deep_json_recursion_is_unavailable(self) -> None:
-        # Prevent malformed SDK content from producing a traceback, including
-        # file paths or snippets, in the Actions failure diagnostics.
+    def test_extremely_deep_json_never_exposes_status_or_payload(self) -> None:
+        # The JSON parser's maximum depth varies by Python version. A deep
+        # array may decode successfully (NO_HTTP_STATUS) or raise RecursionError
+        # (UNAVAILABLE); neither outcome is valid SDK HTTP-status evidence.
         self.file.write_text(
             "[" * 2500 + '"SECRET_SENTINEL"' + "]" * 2500,
             encoding="utf-8",
         )
-        self.assertEqual(self.classify(), UNAVAILABLE)
+        category, status = inspect_execution_file(str(self.directory))
+        self.assertIn(category, (NO_HTTP_STATUS, UNAVAILABLE))
+        self.assertIsNone(status)
+        output = self.run_main()
+        self.assertIn("claude_bootstrap_http_status=UNAVAILABLE\\n", output)
+        self.assertNotIn("SECRET_SENTINEL", output)
+        self.assertNotIn("Traceback", output)
+
+        # Exercise both parser outcomes deterministically, independently of
+        # the interpreter hosting this test suite.
+        with patch(
+            "execution_coordinator.provider_failure_diagnostic.json.loads",
+            return_value=[["SECRET_SENTINEL"]],
+        ):
+            self.assertEqual(
+                inspect_execution_file(str(self.directory)),
+                (NO_HTTP_STATUS, None),
+            )
+        with patch(
+            "execution_coordinator.provider_failure_diagnostic.json.loads",
+            side_effect=RecursionError,
+        ):
+            self.assertEqual(
+                inspect_execution_file(str(self.directory)),
+                (UNAVAILABLE, None),
+            )
 
     def test_oversized_execution_file_is_not_parsed(self) -> None:
         self.file.write_bytes(b"x" * (MAX_EXECUTION_FILE_BYTES + 1))
