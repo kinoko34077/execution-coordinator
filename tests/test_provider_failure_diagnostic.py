@@ -125,8 +125,8 @@ class ProviderFailureDiagnosticTests(unittest.TestCase):
         output = self.run_main()
         self.assertEqual(
             output,
-            f"claude_bootstrap_error_class={error_class}\\n"
-            "claude_bootstrap_http_status=UNAVAILABLE\\n",
+            f"claude_bootstrap_error_class={error_class}\n"
+            "claude_bootstrap_http_status=UNAVAILABLE\n",
         )
         self.assertNotIn("SECRET_SENTINEL", output)
         self.assertNotIn("Traceback", output)
