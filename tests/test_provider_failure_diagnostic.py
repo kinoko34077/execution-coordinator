@@ -131,6 +131,35 @@ class ProviderFailureDiagnosticTests(unittest.TestCase):
         self.assertNotIn("SECRET_SENTINEL", output)
         self.assertNotIn("Traceback", output)
 
+        # Force both interpreter-dependent JSON branches, so the contract is
+        # covered even if CI's Python version only exercises one naturally.
+        with patch(
+            "execution_coordinator.provider_failure_diagnostic.json.loads",
+            return_value=[["SECRET_SENTINEL"]],
+        ):
+            self.assertEqual(
+                inspect_execution_file(str(self.directory)),
+                (NO_HTTP_STATUS, None),
+            )
+            self.assertEqual(
+                self.run_main(),
+                "claude_bootstrap_error_class=NO_HTTP_STATUS\n"
+                "claude_bootstrap_http_status=UNAVAILABLE\n",
+            )
+        with patch(
+            "execution_coordinator.provider_failure_diagnostic.json.loads",
+            side_effect=RecursionError,
+        ):
+            self.assertEqual(
+                inspect_execution_file(str(self.directory)),
+                (UNAVAILABLE, None),
+            )
+            self.assertEqual(
+                self.run_main(),
+                "claude_bootstrap_error_class=UNAVAILABLE\n"
+                "claude_bootstrap_http_status=UNAVAILABLE\n",
+            )
+
     def test_oversized_execution_file_is_not_parsed(self) -> None:
         self.file.write_bytes(b"x" * (MAX_EXECUTION_FILE_BYTES + 1))
         self.assertEqual(self.classify(), UNAVAILABLE)
