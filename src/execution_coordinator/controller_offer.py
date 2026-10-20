@@ -77,6 +77,7 @@ def select_controller_offer(
     read: PortfolioRuntimeRead,
     *,
     supported_roles: frozenset[Role] = frozenset({Role.IMPLEMENTER}),
+    excluded_tasks: frozenset[str] = frozenset(),
 ) -> ControllerOffer | None:
     if not isinstance(read, PortfolioRuntimeRead):
         raise TypeError("read must be a PortfolioRuntimeRead")
@@ -86,6 +87,8 @@ def select_controller_offer(
     requirements = {(item.task, item.role): item for item in read.requirements}
     for ranked in read.ranked.ranked:
         candidate = ranked.candidate
+        if candidate.task in excluded_tasks:
+            continue
         if candidate.role not in roles:
             continue
         if candidate.role is Role.REVIEWER and (
