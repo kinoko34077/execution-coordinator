@@ -40,6 +40,15 @@ from .pull_request_read import PullRequestReader
 from .ranking import ControlPriority
 
 CONTEXT_SCHEMA_VERSION = "controller-auto-launch-context.v1"
+# Maintenance Ledgers are manual/idle work sources, never automatic provider triggers.
+_MAINTENANCE_TYPE = re.compile(
+    r"(?im)^##[ \t]+Type[ \t]*\r?\n[ \t]*(?:[-*][ \t]*)?`?MAINTENANCE\b"
+)
+
+
+def _is_manual_only_maintenance(body: str) -> bool:
+    return bool(_MAINTENANCE_TYPE.search(body))
+
 _DEFAULT_CONTEXT_DIR = ".controller-auto-launch"
 _TASK_REF = re.compile(r"^([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#([1-9][0-9]*)$")
 _SECRET = re.compile(
@@ -371,9 +380,19 @@ def prepare_offer(
         worker_id="controller-auto-v1",
         now=now,
     )
+    # This check is independent of Control Priority (P0 is highest) and of
+    # manual/chat pickup. A high-priority Control may own a low-priority Ledger.
+    manual_only_tasks: set[str] = set()
+    if read.complete and read.ranked is not None:
+        for ranked in read.ranked.ranked:
+            repository, number = _task_parts(ranked.candidate.task)
+            task_document = issue_reader.read_issue(repository, number)
+            if _is_manual_only_maintenance(task_document.body):
+                manual_only_tasks.add(ranked.candidate.task)
     offer = select_controller_offer(
         read,
         supported_roles=frozenset({Role.IMPLEMENTER, Role.REVIEWER}),
+        excluded_tasks=frozenset(manual_only_tasks),
     )
     offer_path = context_dir / "offer.json"
     if offer is None:
@@ -464,6 +483,10 @@ def accept_and_claim(
     validated_task = snapshot_reader.snapshot(repository, issue)
     task_document = issue_reader.read_issue(repository, issue)
     if not _prompt_task_matches_validated_snapshot(validated_task, task_document):
+        return {"result": OfferResponseCode.DEFERRED_BUSY.value, "claim_id": None}
+    # Revalidate after reading the target again: a stale saved offer cannot
+    # change the manual-only Ledger into a scheduled Claude Claim.
+    if _is_manual_only_maintenance(task_document.body):
         return {"result": OfferResponseCode.DEFERRED_BUSY.value, "claim_id": None}
     _assert_no_secret(task_document.body)
     if not isinstance(base_sha, str) or not re.fullmatch(r"[0-9a-fA-F]{40}", base_sha):
