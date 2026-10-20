@@ -42,7 +42,7 @@ from .ranking import ControlPriority
 CONTEXT_SCHEMA_VERSION = "controller-auto-launch-context.v1"
 # Maintenance Ledgers are manual/idle work sources, never automatic provider triggers.
 _MAINTENANCE_TYPE = re.compile(
-    r"(?im)^##[ \t]+Type[ \t]*\r?\n[ \t]*(?:[-*][ \t]*)?`?MAINTENANCE\b"
+    r"(?im)^##[ \t]+Type[ \t]*\r?\n(?:[ \t]*\r?\n)*[ \t]*(?:[-*][ \t]*)?`?MAINTENANCE\b"
 )
 
 
