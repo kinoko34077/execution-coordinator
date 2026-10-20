@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from unittest.mock import patch
 from datetime import timedelta
 from pathlib import Path
@@ -23,7 +24,7 @@ from tests.test_controller_offer import _review_read
 from execution_coordinator.runtime_maintenance import expire_stale_claims
 from execution_coordinator.snapshot import parse_issue_body
 from tests.test_agent import _Gateway
-from tests.test_bootstrap_pickup import NOW, _Reader, _Store, _doc, _portfolio_control
+from tests.test_bootstrap_pickup import NOW, _Reader, _Store, _doc, _portfolio_control, _digest
 
 
 class _PullReader:
@@ -40,6 +41,61 @@ class ActionsControllerTests(unittest.TestCase):
     def _fixture(self):
         control, task, _ = _portfolio_control("owner/a", 201, 8, priority="P1")
         return control, task, _Reader(control, task)
+
+    @staticmethod
+    def _as_maintenance(control, task):
+        """Preserve exact Control/portfolio source digests for a real Ledger fixture."""
+        body = task.body + "\n\n## Type\n\n`MAINTENANCE`\n"
+        return (
+            replace(control, body=control.body.replace(_digest(task.body), _digest(body))),
+            replace(task, body=body),
+        )
+
+    def test_scheduled_controller_skips_high_priority_maintenance_and_uses_normal_work(self) -> None:
+        maintenance, audit, _ = _portfolio_control("owner/a", 201, 8, priority="P0")
+        maintenance, audit = self._as_maintenance(maintenance, audit)
+        normal, task, _ = _portfolio_control("owner/b", 202, 9, priority="P2")
+        reader = _Reader(maintenance, audit, normal, task)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = prepare_offer(
+                (maintenance, normal), issue_reader=reader, state_reader=_Store(),
+                now=NOW, context_dir=Path(tmp),
+            )
+            self.assertTrue(result["has_offer"])
+            self.assertEqual("owner/b", result["target_repository"])
+            self.assertEqual(9, result["target_issue"])
+
+    def test_scheduled_controller_does_not_offer_maintenance_only(self) -> None:
+        control, task, _ = _portfolio_control("owner/a", 201, 8, priority="P0")
+        control, task = self._as_maintenance(control, task)
+        with tempfile.TemporaryDirectory() as tmp:
+            result = prepare_offer(
+                (control,), issue_reader=_Reader(control, task),
+                state_reader=_Store(), now=NOW, context_dir=Path(tmp),
+            )
+            self.assertFalse(result["has_offer"])
+            self.assertFalse((Path(tmp) / "offer.json").exists())
+
+    def test_preclaim_rejects_stale_offer_reclassified_as_maintenance(self) -> None:
+        control, task, reader = self._fixture()
+        gateway = _Gateway(now=NOW)
+        with tempfile.TemporaryDirectory() as tmp:
+            context_dir = Path(tmp)
+            prepared = prepare_offer(
+                (control,), issue_reader=reader, state_reader=gateway.store,
+                now=NOW, context_dir=context_dir,
+            )
+            self.assertTrue(prepared["has_offer"])
+            maintenance, ledger = self._as_maintenance(control, task)
+            result = accept_and_claim(
+                (maintenance,), issue_reader=_Reader(maintenance, ledger),
+                state_reader=gateway.store, gateway=gateway, now=NOW,
+                context_dir=context_dir, preflight=self._preflight(),
+                base_sha="a" * 40, attempt_id="smc-reclassified-148",
+            )
+            self.assertEqual("DEFERRED_BUSY", result["result"])
+            self.assertIsNone(result["claim_id"])
+            self.assertEqual([], gateway.calls)
 
     def _preflight(self, **overrides):
         value = {
