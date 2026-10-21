@@ -23,6 +23,11 @@ jobs:
       PYTHONPATH: src
       CONTEXT_DIR: .controller-auto-launch
       TARGET_DIR: target
+      # Fee-bearing Provider use is frozen. Never infer permission from OIDC,
+      # configured secrets, a READY task, or a manual workflow_dispatch.
+      # Changing this literal requires a separate explicit user policy change,
+      # code review and a source-bound operational safety check.
+      PAID_PROVIDER_ADMISSION: denied
     steps:
       - name: Checkout execution coordinator
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -43,6 +48,7 @@ jobs:
 
       - name: Prepare controller offer
         id: offer
+        if: env.PAID_PROVIDER_ADMISSION == 'approved'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
@@ -202,7 +208,7 @@ jobs:
 
       - name: Accept and claim
         id: claim
-        if: steps.offer.outputs.has_offer == 'true'
+        if: env.PAID_PROVIDER_ADMISSION == 'approved' && steps.offer.outputs.has_offer == 'true'
         env:
           GITHUB_TOKEN: ${{ github.token }}
           COORDINATOR_READ_TOKEN: ${{ secrets.COORDINATOR_READ_TOKEN }}
@@ -233,7 +239,7 @@ jobs:
 
       - name: Bootstrap Claude execution context
         id: claude-bootstrap
-        if: steps.claim.outputs.result == 'ACCEPTED'
+        if: env.PAID_PROVIDER_ADMISSION == 'approved' && steps.claim.outputs.result == 'ACCEPTED'
         continue-on-error: true
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
@@ -311,7 +317,7 @@ jobs:
 
       - name: Run bounded Claude implementation work
         id: claude-implement
-        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer'
+        if: env.PAID_PROVIDER_ADMISSION == 'approved' && steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role != 'reviewer'
         continue-on-error: true
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
@@ -333,7 +339,7 @@ jobs:
 
       - name: Run bounded Claude review work
         id: claude-review
-        if: steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role == 'reviewer'
+        if: env.PAID_PROVIDER_ADMISSION == 'approved' && steps.reconcile.outputs.state == 'RUNNING' && steps.claim.outputs.role == 'reviewer'
         continue-on-error: true
         uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # Claude Code 2.1.284
         env:
