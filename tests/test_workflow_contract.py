@@ -81,6 +81,27 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn(f"actions/create-github-app-token@{APP_TOKEN_SHA}", text)
         self.assertIn(f"anthropics/claude-code-base-action@{CLAUDE_BASE_ACTION_SHA}", text)
 
+    def test_fee_bearing_provider_is_denied_by_default_without_disabling_expiry(self) -> None:
+        text = self._auto_launch_text()
+        self.assertIn("PAID_PROVIDER_ADMISSION: denied", text)
+        self.assertIn("name: Expire stale runtime claims", text)
+        offer = text[text.index("name: Prepare controller offer"):text.index("name: Derive target token scope")]
+        self.assertIn("if: env.PAID_PROVIDER_ADMISSION == 'approved'", offer)
+        claim = text[text.index("name: Accept and claim"):text.index("name: Prepare role-aware target context")]
+        self.assertIn("if: env.PAID_PROVIDER_ADMISSION == 'approved'", claim)
+        for step_name in (
+            "Bootstrap Claude execution context",
+            "Run bounded Claude implementation work",
+            "Run bounded Claude review work",
+        ):
+            start = text.index("name: " + step_name)
+            end = text.index("uses: anthropics/claude-code-base-action@", start)
+            self.assertIn("if: env.PAID_PROVIDER_ADMISSION == 'approved'", text[start:end])
+        # Existing provider credentials and ready candidates must not override
+        # the current hard-deny human cost policy.
+        self.assertNotIn("PAID_PROVIDER_ADMISSION: ${{", text)
+        self.assertNotIn("PAID_PROVIDER_ADMISSION: approved", text)
+
     def test_auto_launch_target_token_is_offer_gated_scoped_and_created_before_claim(self) -> None:
         text = self._auto_launch_text()
         offer = text.index("name: Prepare controller offer")
