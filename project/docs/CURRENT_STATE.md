@@ -1,5 +1,13 @@
 # Current State
 
+## 2026-10-22 fee-bearing Provider admission — enforced DENY
+
+- Active user authority [devflow #541](https://github.com/kinoko34077/devflow/issues/541) prohibits fee-bearing AI/API Provider launches. [Local #151](https://github.com/kinoko34077/execution-coordinator/issues/151), security PR [#153](https://github.com/kinoko34077/execution-coordinator/pull/153), merged source main `da5e26fe6990c1275628c6887db4748334dc4444`; PR and post-main Verify SUCCESS.
+- `.github/workflows/controller-auto-launch.yml` sets `PAID_PROVIDER_ADMISSION: denied` literally. Scheduled/manual controller retains uncharged stale-Claim expiry but cannot prepare offers, Claim, or invoke Claude bootstrap/implement/review until **future explicit user policy, separate code revision and verified authority** change this setting. Presence of GitHub App/WIF secrets, an ordinary READY task, or previous paid E2E discussions never grants current launch admission.
+- Scope: defensive code-only guard; **no paid model was executed, no new claim, GitHub App/secret/permission/schedule/billing action or external deployment** from the security fix. Provider E2E under #87 remains blocked separately.
+- [Issue #152](https://github.com/kinoko34077/execution-coordinator/issues/152) is **OPEN**: current collaborator `/release` privilege matches existing broad transport acceptance but is not claimant-identity-bound. Changing its permission semantics requires devflow protocol authority and separate security review.
+
+
 ## Repository state
 
 `V0.1 + PHASE 5 + RECONCILIATION DEMAND ADOPTION + MANAGED FRONTIER + DETERMINISTIC RANKING + CAPABILITY MATCHING + PORTFOLIO PICKUP V2 + BOUNDED AUTONOMOUS CYCLE + CONTROLLER-FIRST ACTIONS AUTO-LAUNCH V1 + STAGE 1 WORK-CLASS RUNTIME PROPAGATION + ACTIONS CHAT PICKUP TRANSPORT + MANUAL PICKUP EXPIRY SELF-HEAL + REVIEWER PROVENANCE PICKUP ELIGIBILITY + PROVIDER-INDEPENDENT REQUEST BOUNDARY + CODEX APP-SERVER STAGE-C TRANSPORT + STAGE-D REVIEWER-ROLE AUTO-LAUNCH / ACCEPTED`
