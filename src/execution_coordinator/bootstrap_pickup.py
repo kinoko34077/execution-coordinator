@@ -54,6 +54,8 @@ from .ranking import candidate_fingerprint, portable_rank_class_key
 EVIDENCE_SCHEMA = "chat-worker-bootstrap-evidence.v1"
 EVIDENCE_TTL = timedelta(minutes=10)
 DEVFLOW = "kinoko34077/devflow"
+CONTROL_PAGE_SIZE = 100
+CONTROL_MAX_PAGES = 100
 
 # Accepted role -> default action tag when projecting a ClaimCandidate.
 _ROLE_ACTION = {
@@ -94,6 +96,10 @@ def control_summary(document: IssueDocument) -> dict[str, Any]:
         "human_gate": any(token in next_action for token in _HUMAN_TOKENS),
         "external_blocker": work_status == "BLOCKED",
     }
+
+
+class ControlListingError(RuntimeError):
+    """The complete open Repository Control listing could not be verified."""
 
 
 def _candidate_evidence(
@@ -359,22 +365,45 @@ def execute_selection(
 
 
 def list_control_documents(token: str, reader: IssueReader) -> tuple[IssueDocument, ...]:
-    """Read every open ``[REPO]`` Control in devflow through the exact reader."""
+    """Read the complete bounded open-Control listing, then use the exact reader."""
 
-    request = urllib.request.Request(
-        f"https://api.github.com/repos/{DEVFLOW}/issues?state=open&per_page=100",
-        headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
-    )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        issues = json.load(response)
-    numbers = sorted(
-        issue["number"]
-        for issue in issues
-        if isinstance(issue, dict)
-        and str(issue.get("title", "")).startswith("[REPO] ")
-        and "pull_request" not in issue
-    )
-    return tuple(reader.read_issue(DEVFLOW, number) for number in numbers)
+    control_numbers: set[int] = set()
+    for page in range(1, CONTROL_MAX_PAGES + 1):
+        request = urllib.request.Request(
+            f"https://api.github.com/repos/{DEVFLOW}/issues"
+            f"?state=all&per_page={CONTROL_PAGE_SIZE}&page={page}&sort=created&direction=asc",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"},
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=20) as response:
+                issues = json.load(response)
+        except Exception as error:
+            raise ControlListingError(f"control listing page {page} could not be read") from error
+
+        if not isinstance(issues, list):
+            raise ControlListingError(f"control listing page {page} returned an invalid response")
+        for issue in issues:
+            if not isinstance(issue, dict):
+                raise ControlListingError(f"control listing page {page} contained an invalid issue")
+            number = issue.get("number")
+            title = issue.get("title")
+            state = issue.get("state")
+            if (
+                isinstance(number, bool)
+                or not isinstance(number, int)
+                or not isinstance(title, str)
+                or state not in {"open", "closed"}
+            ):
+                raise ControlListingError(f"control listing page {page} contained an invalid issue identity")
+            if state == "open" and title.startswith("[REPO] ") and "pull_request" not in issue:
+                control_numbers.add(number)
+
+        if len(issues) < CONTROL_PAGE_SIZE:
+            break
+    else:
+        raise ControlListingError(f"control listing exceeded the {CONTROL_MAX_PAGES}-page safety limit")
+
+    return tuple(reader.read_issue(DEVFLOW, number) for number in sorted(control_numbers))
 
 
 def _expire_stale_before_pickup(
