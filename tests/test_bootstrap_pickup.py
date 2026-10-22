@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import types
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from execution_coordinator.bootstrap_pickup import (
     GatherInputs,
@@ -12,6 +14,7 @@ from execution_coordinator.bootstrap_pickup import (
     control_summary,
     execute_selection,
     gather_evidence,
+    list_control_documents,
     run_pickup,
 )
 from execution_coordinator.discovery import IssueDocument
@@ -74,6 +77,104 @@ class _Reader:
 
     def read_issue(self, repository, number):
         return self.documents[(repository, number)]
+
+
+class ListControlDocumentsTests(unittest.TestCase):
+    @staticmethod
+    def _issue(number, title, state="open"):
+        return {"number": number, "title": title, "state": state}
+
+    @staticmethod
+    def _response(issues):
+        return io.BytesIO(json.dumps(issues).encode("utf-8"))
+
+    def test_reads_later_pages_and_deduplicates_control_numbers(self):
+        first_page = [self._issue(number, f"Discussion {number}") for number in range(1, 101)]
+        first_page[11] = self._issue(12, "[REPO] old-name")
+        second_page = [
+            self._issue(12, "[REPO] old-name"),
+            self._issue(15, "[REPO] dev_agent"),
+        ]
+        reader = unittest.mock.Mock()
+        reader.read_issue.side_effect = lambda repository, number: (repository, number)
+
+        with patch(
+            "execution_coordinator.bootstrap_pickup.urllib.request.urlopen",
+            side_effect=[self._response(first_page), self._response(second_page)],
+        ) as urlopen:
+            result = list_control_documents("test-token", reader)
+
+        self.assertEqual(
+            (("kinoko34077/devflow", 12), ("kinoko34077/devflow", 15)),
+            result,
+        )
+        self.assertEqual(2, urlopen.call_count)
+        reader.read_issue.assert_has_calls(
+            [
+                unittest.mock.call("kinoko34077/devflow", 12),
+                unittest.mock.call("kinoko34077/devflow", 15),
+            ]
+        )
+
+    def test_lists_all_states_to_keep_page_offsets_stable_then_filters_open(self):
+        first_page = [self._issue(number, f"Discussion {number}", "closed") for number in range(1, 101)]
+        first_page[0] = self._issue(1, "[REPO] closed-control", "closed")
+        second_page = [self._issue(15, "[REPO] dev_agent")]
+        reader = unittest.mock.Mock()
+        reader.read_issue.side_effect = lambda repository, number: (repository, number)
+
+        with patch(
+            "execution_coordinator.bootstrap_pickup.urllib.request.urlopen",
+            side_effect=[self._response(first_page), self._response(second_page)],
+        ) as urlopen:
+            result = list_control_documents("test-token", reader)
+
+        self.assertEqual((("kinoko34077/devflow", 15),), result)
+        self.assertIn("state=all", urlopen.call_args_list[0].args[0].full_url)
+        reader.read_issue.assert_called_once_with("kinoko34077/devflow", 15)
+
+    def test_second_page_failure_does_not_return_partial_controls(self):
+        first_page = [self._issue(number, f"Discussion {number}") for number in range(1, 101)]
+        first_page[0] = self._issue(1, "[REPO] partial")
+        reader = unittest.mock.Mock()
+
+        with patch(
+            "execution_coordinator.bootstrap_pickup.urllib.request.urlopen",
+            side_effect=[self._response(first_page), OSError("offline")],
+        ):
+            with self.assertRaisesRegex(RuntimeError, "control listing"):
+                list_control_documents("test-token", reader)
+
+        reader.read_issue.assert_not_called()
+
+    def test_malformed_issue_state_fails_with_typed_listing_error(self):
+        page = [self._issue(1, "[REPO] malformed")]
+        page[0]["state"] = []
+        reader = unittest.mock.Mock()
+
+        with patch(
+            "execution_coordinator.bootstrap_pickup.urllib.request.urlopen",
+            return_value=self._response(page),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "invalid issue identity"):
+                list_control_documents("test-token", reader)
+
+        reader.read_issue.assert_not_called()
+
+    def test_full_page_at_defensive_limit_fails_closed(self):
+        full_page = [self._issue(number, f"Discussion {number}") for number in range(1, 101)]
+        full_page[0] = self._issue(1, "[REPO] partial")
+        reader = unittest.mock.Mock()
+
+        with patch("execution_coordinator.bootstrap_pickup.CONTROL_MAX_PAGES", 1, create=True):
+            with patch(
+                "execution_coordinator.bootstrap_pickup.urllib.request.urlopen",
+                return_value=self._response(full_page),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "control listing"):
+                    list_control_documents("test-token", reader)
+
+        reader.read_issue.assert_not_called()
 
 
 class _Store:
