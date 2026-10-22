@@ -392,6 +392,7 @@ def list_control_documents(token: str, reader: IssueReader) -> tuple[IssueDocume
                 isinstance(number, bool)
                 or not isinstance(number, int)
                 or not isinstance(title, str)
+                or not isinstance(state, str)
                 or state not in {"open", "closed"}
             ):
                 raise ControlListingError(f"control listing page {page} contained an invalid issue identity")

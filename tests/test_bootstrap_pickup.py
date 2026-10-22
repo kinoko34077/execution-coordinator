@@ -147,6 +147,20 @@ class ListControlDocumentsTests(unittest.TestCase):
 
         reader.read_issue.assert_not_called()
 
+    def test_malformed_issue_state_fails_with_typed_listing_error(self):
+        page = [self._issue(1, "[REPO] malformed")]
+        page[0]["state"] = []
+        reader = unittest.mock.Mock()
+
+        with patch(
+            "execution_coordinator.bootstrap_pickup.urllib.request.urlopen",
+            return_value=self._response(page),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "invalid issue identity"):
+                list_control_documents("test-token", reader)
+
+        reader.read_issue.assert_not_called()
+
     def test_full_page_at_defensive_limit_fails_closed(self):
         full_page = [self._issue(number, f"Discussion {number}") for number in range(1, 101)]
         full_page[0] = self._issue(1, "[REPO] partial")
