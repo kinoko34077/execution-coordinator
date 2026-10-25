@@ -599,6 +599,7 @@ def load_devflow_tools(devflow_path: str) -> Any:
     return types.SimpleNamespace(
         chat_worker_profile=importlib.import_module("tools.chat_worker_profile"),
         chat_worker_bootstrap=importlib.import_module("tools.chat_worker_bootstrap"),
+        github_issue_trust=importlib.import_module("tools.github_issue_trust"),
     )
 
 
