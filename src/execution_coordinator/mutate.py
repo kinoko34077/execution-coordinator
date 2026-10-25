@@ -206,6 +206,13 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(payload, dict):
             raise ValueError("payload JSON must be an object")
         verified_actor_id = None
+        if args.operation == "release":
+            from .chat_authority import authorize_internal_release_dispatch
+            authorize_internal_release_dispatch(
+                actor_id=os.environ.get("GITHUB_ACTOR_ID"),
+                actor_login=os.environ.get("GITHUB_ACTOR"),
+                devflow_path=os.environ.get("DEVFLOW_PATH", ""),
+            )
         if args.operation in ("chat_claim", "chat_release"):
             from .chat_authority import verify_chat_origin
             verified_actor_id = verify_chat_origin(
