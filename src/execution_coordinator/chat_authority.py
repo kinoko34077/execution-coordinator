@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import importlib
 import json
-import os
 import sys
 import urllib.request
 from pathlib import Path
@@ -83,3 +82,29 @@ def verify_chat_origin(
         ):
             raise ChatOriginRejected("source release command/claim tuple mismatch")
     return comment["user"]["id"]
+
+
+def authorize_internal_release_dispatch(*, actor_id: object, actor_login: object, devflow_path: str) -> None:
+    """Allow existing machine lifecycle release or canonical human GitHub principal.
+
+    Unlike chat release, this path can only release INTERNAL claims; the engine
+    rejects use against chat-claimed or old unowned claims.
+    """
+    root = str(Path(devflow_path).resolve())
+    if root not in sys.path:
+        sys.path.insert(0, root)
+    try:
+        shared_trust = importlib.import_module("tools.github_issue_trust")
+    except ImportError as exc:
+        raise ChatOriginRejected("canonical devflow principal verifier unavailable") from exc
+    if isinstance(actor_id, str) and actor_id.isdecimal():
+        numeric_id = int(actor_id)
+    else:
+        raise ChatOriginRejected("internal release requires authenticated workflow actor ID")
+    if type(actor_login) is not str:
+        raise ChatOriginRejected("internal release requires authenticated actor login")
+    if numeric_id == 41898282 and actor_login == "github-actions[bot]":
+        # Machine lifecycle dispatch from the existing authorized Actions lane.
+        return
+    if not shared_trust.is_trusted_principal({"user": {"id": numeric_id, "login": actor_login}}):
+        raise ChatOriginRejected("direct release requester is not allowlisted")
