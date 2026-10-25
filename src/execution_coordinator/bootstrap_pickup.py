@@ -331,6 +331,7 @@ def execute_selection(
     *,
     claim_key: str,
     acknowledge_key: str,
+    chat_source_comment_id: int | None = None,
 ) -> AgentSession:
     """Claim then acknowledge the classifier's selection.  One claim only.
 
@@ -358,6 +359,7 @@ def execute_selection(
         role=candidate.role,
         worker_id=result["coordinator_worker_id"],
         conflict_keys=candidate.conflict_keys,
+        source_comment_id=chat_source_comment_id,
     )
     session.claim(idempotency_key=claim_key)
     session.acknowledge(idempotency_key=acknowledge_key)
@@ -449,6 +451,7 @@ def run_pickup(
     now: datetime,
     gateway_factory: Callable[[], MutationGateway] | None = None,
     published: frozenset[tuple[str, Role]] = frozenset(),
+    chat_source_comment_id: int | None = None,
 ) -> dict[str, Any]:
     """One discovery cycle: profile -> evidence -> classify -> (claim+ack).
 
@@ -502,6 +505,7 @@ def run_pickup(
             gateway_factory(),
             claim_key=f"{attempt}:claim",
             acknowledge_key=f"{attempt}:ack",
+            chat_source_comment_id=chat_source_comment_id,
         )
         outcome["claim_id"] = session.claim_id
         outcome["session"] = session
