@@ -43,6 +43,7 @@ class AgentSession:
         conflict_keys: tuple[str, ...] = (),
         base_sha: str | None = None,
         branch: str | None = None,
+        source_comment_id: int | None = None,
     ) -> None:
         if not task.strip():
             raise ValueError("task must not be empty")
@@ -55,6 +56,7 @@ class AgentSession:
         self._conflict_keys = tuple(conflict_keys)
         self._base_sha = base_sha
         self._branch = branch
+        self._source_comment_id = source_comment_id
         self._claim_id: str | None = None
         self._generation: int | None = None
         self._execution_state: ExecutionState | None = None
@@ -218,8 +220,9 @@ class AgentSession:
     def claim(self, *, idempotency_key: str) -> MutationResult:
         self._ensure_claimable()
         result = self._gateway.mutate(
-            operation="claim",
+            operation="chat_claim" if self._source_comment_id is not None else "claim",
             payload={
+                **({"source_comment_id": self._source_comment_id} if self._source_comment_id is not None else {}),
                 "task": self._task,
                 "role": self._role.value,
                 "worker_id": self._worker_id,

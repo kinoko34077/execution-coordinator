@@ -36,7 +36,6 @@ import urllib.request
 from datetime import datetime, timezone
 from typing import Any, Callable
 
-TRUSTED = frozenset({"OWNER", "MEMBER", "COLLABORATOR"})
 PICKUP_KEYS = frozenset({
     "target",
     "worker_system",
@@ -102,9 +101,10 @@ def parse_command(body: str) -> tuple[str, dict[str, str]] | None:
     return command, fields
 
 
-def authorize(author_association: str) -> None:
-    if author_association not in TRUSTED:
-        raise CommandRejected("UNTRUSTED_AUTHOR", "only OWNER, MEMBER or COLLABORATOR may request pickups")
+def authorize(comment: dict[str, Any], trust: Any) -> None:
+    # The shared devflow principal verifier owns the numeric GitHub allowlist.
+    if not trust.is_trusted_principal(comment):
+        raise CommandRejected("UNTRUSTED_AUTHOR", "GitHub numeric user ID is not allowlisted")
 
 
 def declared_probes(fields: dict[str, str], profile_tools: Any) -> dict[str, bool]:
@@ -182,7 +182,7 @@ def handle(
     now: datetime,
     devflow_tools: Any,
     run_pickup_fn: Callable[..., dict[str, Any]],
-    release_fn: Callable[[str, int, str], None],
+    release_fn: Callable[[str, int, str, int, str], None],
 ) -> dict[str, Any] | None:
     """Process one ``issue_comment`` event.  Returns the reply payload."""
 
@@ -192,7 +192,7 @@ def handle(
     if first not in ("/pickup", "/release"):
         return None
     try:
-        authorize(str(comment.get("author_association") or ""))
+        authorize(comment, devflow_tools.github_issue_trust)
     except CommandRejected:
         # Untrusted requests are ignored silently: no reply, no mutation.
         return None
@@ -209,14 +209,21 @@ def handle(
                 raise CommandRejected("COMMAND_MALFORMED", "claim_id is malformed")
             generation = int(fields["generation"])
             key = f"{fields['session']}:release:{fields['claim_id']}"
-            release_fn(fields["claim_id"], generation, key)
+            source_comment_id = comment.get("id")
+            if type(source_comment_id) is not int or source_comment_id < 1:
+                raise CommandRejected("COMMAND_MALFORMED", "authenticated source comment ID missing")
+            release_fn(fields["claim_id"], generation, key, source_comment_id, fields["session"])
             return {"status": "RELEASED", "claim_id": fields["claim_id"], "generation": generation}
+        source_comment_id = comment.get("id")
+        if type(source_comment_id) is not int or source_comment_id < 1:
+            raise CommandRejected("COMMAND_MALFORMED", "authenticated source comment ID missing")
         observation = build_observation(fields, devflow_tools.chat_worker_profile, now)
         outcome = run_pickup_fn(
             target_repository=fields.get("target"),
             observation=observation,
             work_intent=fields.get("intent"),
             accepted_work_classes=_accepted_work_classes(fields),
+            chat_source_comment_id=source_comment_id,
         )
     except CommandRejected as rejection:
         return {"status": "REJECTED", "reason_code": rejection.code, "detail": str(rejection)}
@@ -272,8 +279,12 @@ def main() -> int:  # pragma: no cover - exercised by the workflow
             **kwargs,
         )
 
-    def release(claim_id: str, generation: int, key: str) -> None:
-        gateway().mutate(operation="release", payload={"claim_id": claim_id, "generation": generation}, idempotency_key=key)
+    def release(claim_id: str, generation: int, key: str, source_comment_id: int, session: str) -> None:
+        gateway().mutate(
+            operation="chat_release",
+            payload={"claim_id": claim_id, "generation": generation, "session": session, "source_comment_id": source_comment_id},
+            idempotency_key=key,
+        )
 
     try:
         reply = handle(event, now=now, devflow_tools=tools, run_pickup_fn=pickup, release_fn=release)

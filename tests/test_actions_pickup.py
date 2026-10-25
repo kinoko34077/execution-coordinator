@@ -35,7 +35,9 @@ class _Profile:
         return f"{system}-{started_at.strftime('%Y%m%dT%H%M%SZ')}-{entropy}"
 
 
-TOOLS = types.SimpleNamespace(chat_worker_profile=_Profile)
+TOOLS = types.SimpleNamespace(chat_worker_profile=_Profile, github_issue_trust=types.SimpleNamespace(
+    is_trusted_principal=lambda comment: type((comment.get("user") or {}).get("id")) is int and (comment.get("user") or {}).get("id") == 79015263
+))
 PICKUP = "/pickup\ntarget: kinoko34077/execution-coordinator\nworker_system: chatgpt\ncapabilities: python\nintent: このリポ側に合わせてなんか作業して"
 PORTFOLIO_PICKUP = "/pickup\nworker_system: chatgpt\nintent: portfolio maintenance pickup"
 WORKCLASS_PICKUP = (
@@ -47,8 +49,8 @@ WORKCLASS_PICKUP = (
 )
 
 
-def event(body, association="OWNER"):
-    return {"comment": {"body": body, "author_association": association}, "issue": {"number": 1}}
+def event(body, association="OWNER", actor_id=79015263):
+    return {"comment": {"id": 12345, "body": body, "author_association": association, "user": {"id": actor_id, "login": "kinoko34077"}}, "issue": {"number": 1}}
 
 
 class ParserTests(unittest.TestCase):
@@ -119,24 +121,31 @@ class ProbeTests(unittest.TestCase):
 
 
 class HandleTests(unittest.TestCase):
-    def _run(self, body, association="OWNER", outcome=None):
+    def _run(self, body, association="OWNER", outcome=None, actor_id=79015263):
         calls = {"pickup": [], "release": []}
 
         def pickup(**kwargs):
             calls["pickup"].append(kwargs)
             return outcome or {"result": {"disposition": "NO_ELIGIBLE_WORK"}, "claim_id": None}
 
-        def release(claim_id, generation, key):
-            calls["release"].append((claim_id, generation, key))
+        def release(claim_id, generation, key, comment_id, session):
+            calls["release"].append((claim_id, generation, key, comment_id, session))
 
-        reply = handle(event(body, association), now=NOW, devflow_tools=TOOLS, run_pickup_fn=pickup, release_fn=release)
+        reply = handle(event(body, association, actor_id), now=NOW, devflow_tools=TOOLS, run_pickup_fn=pickup, release_fn=release)
         return reply, calls
 
     def test_untrusted_author_is_ignored_silently(self):
         for association in ("NONE", "CONTRIBUTOR", "FIRST_TIME_CONTRIBUTOR", ""):
-            reply, calls = self._run(PICKUP, association)
+            reply, calls = self._run(PICKUP, association, actor_id=456)
             self.assertIsNone(reply)
             self.assertEqual([], calls["pickup"])
+
+    def test_unlisted_collaborator_and_invalid_numeric_actor_ignored(self):
+        for actor in (456, None, True, "79015263"):
+            with self.subTest(actor=actor):
+                reply, calls = self._run(PICKUP, "COLLABORATOR", actor_id=actor)
+                self.assertIsNone(reply)
+                self.assertEqual([], calls["pickup"])
 
     def test_non_command_comment_is_ignored(self):
         reply, calls = self._run("thanks!")
@@ -160,6 +169,7 @@ class HandleTests(unittest.TestCase):
         reply, calls = self._run(PORTFOLIO_PICKUP)
         self.assertEqual("NO_CLAIM", reply["status"])
         self.assertIsNone(calls["pickup"][0]["target_repository"])
+        self.assertEqual(12345, calls["pickup"][0]["chat_source_comment_id"])
 
     def test_pickup_forwards_requested_work_classes(self):
         reply, calls = self._run(WORKCLASS_PICKUP)
@@ -182,7 +192,7 @@ class HandleTests(unittest.TestCase):
         claim = "clm_" + "b" * 32
         reply, calls = self._run(f"/release\nsession: chatgpt-x\nclaim_id: {claim}\ngeneration: 3")
         self.assertEqual("RELEASED", reply["status"])
-        self.assertEqual([(claim, 3, f"chatgpt-x:release:{claim}")], calls["release"])
+        self.assertEqual([(claim, 3, f"chatgpt-x:release:{claim}", 12345, "chatgpt-x")], calls["release"])
 
     def test_release_with_bad_claim_id_is_rejected(self):
         reply, calls = self._run("/release\nsession: s\nclaim_id: nope\ngeneration: 1")
@@ -200,6 +210,7 @@ class WorkflowTests(unittest.TestCase):
         text = (ROOT / ".github/workflows/chat-pickup.yml").read_text(encoding="utf-8")
         self.assertIn("issue_comment:", text)
         self.assertIn('["OWNER","MEMBER","COLLABORATOR"]', text)
+        self.assertIn('queue: max', text)
         self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", text)
         self.assertIn("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97", text)
         self.assertIn("python -m execution_coordinator.actions_pickup", text)

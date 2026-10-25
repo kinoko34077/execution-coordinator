@@ -90,6 +90,8 @@ def _claim_to_data(claim: Claim) -> dict[str, Any]:
         "evidence_ref": claim.evidence_ref,
         "base_sha": claim.base_sha,
         "branch": claim.branch,
+        "claim_source": claim.claim_source,
+        "pickup_actor_id": claim.pickup_actor_id,
     }
 
 
@@ -113,9 +115,17 @@ def _claim_from_data(data: object) -> Claim:
             evidence_ref=data["evidence_ref"],
             base_sha=data["base_sha"],
             branch=data["branch"],
+            claim_source=data.get("claim_source", "legacy"),
+            pickup_actor_id=data.get("pickup_actor_id"),
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise SnapshotError("invalid claim record") from exc
+    if claim.claim_source not in ("legacy", "internal", "github_comment"):
+        raise SnapshotError("invalid claim origin")
+    if claim.pickup_actor_id is not None and (type(claim.pickup_actor_id) is not int or claim.pickup_actor_id < 1):
+        raise SnapshotError("invalid pickup actor ID")
+    if (claim.claim_source == "github_comment") != (claim.pickup_actor_id is not None):
+        raise SnapshotError("chat claim must have verified actor ID; other claims must not")
     if claim.generation < 1:
         raise SnapshotError("claim generation must be positive")
     return claim

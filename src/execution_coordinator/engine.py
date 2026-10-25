@@ -151,7 +151,13 @@ def claim(
     base_sha: str | None = None,
     branch: str | None = None,
     lease_minutes: int = DEFAULT_LEASE_MINUTES,
+    claim_source: str = "internal",
+    pickup_actor_id: int | None = None,
 ) -> MutationResult:
+    if claim_source not in ("internal", "github_comment"):
+        raise ValueError("invalid claim source")
+    if (claim_source == "github_comment") != (type(pickup_actor_id) is int and pickup_actor_id > 0):
+        raise ValueError("chat claim requires verified numeric actor ID")
     now = _utc(now)
     keys = tuple(sorted(set(conflict_keys)))
     payload = {
@@ -162,6 +168,8 @@ def claim(
         "base_sha": base_sha,
         "branch": branch,
         "lease_minutes": lease_minutes,
+        "claim_source": claim_source,
+        "pickup_actor_id": pickup_actor_id,
     }
     fingerprint = _fingerprint("claim", payload)
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
@@ -199,6 +207,8 @@ def claim(
         lease_until=now + timedelta(minutes=lease_minutes),
         base_sha=base_sha,
         branch=branch,
+        claim_source=claim_source,
+        pickup_actor_id=pickup_actor_id,
     )
     claims = dict(state.claims)
     claims[claim_id] = current
@@ -389,18 +399,35 @@ def _terminal(
     idempotency_key: str,
     kind: str,
     reason: str | None = None,
+    caller_actor_id: int | None = None,
+    chat_release: bool = False,
 ) -> MutationResult:
     now = _utc(now)
     payload = {
         "claim_id": claim_id,
         "generation": generation,
         "reason": reason,
+        "caller_actor_id": caller_actor_id,
+        "chat_release": chat_release,
     }
     fingerprint = _fingerprint(kind.lower(), payload)
     replay = _replay_or_none(state, idempotency_key=idempotency_key, fingerprint=fingerprint)
     if replay is not None:
         return replay
     current = _require_current(state, claim_id, generation, now=now)
+    if kind == "FAILED" and current.claim_source == "github_comment":
+        # Existing automatic failed-execution cleanup retains system provenance;
+        # a human must instead be the original pickup principal.
+        if type(caller_actor_id) is not int or caller_actor_id not in (current.pickup_actor_id, 41898282):
+            raise InvalidTransition("fail requester is not original pickup actor or established Actions runner")
+    if kind == "RELEASED":
+        if current.claim_source == "legacy":
+            raise InvalidTransition("legacy claim has no verifiable release owner; await expiry")
+        if chat_release:
+            if current.claim_source != "github_comment" or type(caller_actor_id) is not int or caller_actor_id != current.pickup_actor_id:
+                raise InvalidTransition("release requester is not original pickup actor")
+        elif current.claim_source != "internal":
+            raise InvalidTransition("chat claim requires authenticated chat release")
     claims = dict(state.claims)
     del claims[claim_id]
     event = Event(kind, claim_id, current.task, current.role, generation, now, reason)
@@ -423,6 +450,8 @@ def release(
     generation: int,
     now: datetime,
     idempotency_key: str,
+    caller_actor_id: int | None = None,
+    chat_release: bool = False,
 ) -> MutationResult:
     return _terminal(
         state,
@@ -431,6 +460,8 @@ def release(
         now=now,
         idempotency_key=idempotency_key,
         kind="RELEASED",
+        caller_actor_id=caller_actor_id,
+        chat_release=chat_release,
     )
 
 
@@ -442,6 +473,7 @@ def fail(
     now: datetime,
     idempotency_key: str,
     reason: str,
+    caller_actor_id: int | None = None,
 ) -> MutationResult:
     return _terminal(
         state,
@@ -451,6 +483,7 @@ def fail(
         idempotency_key=idempotency_key,
         kind="FAILED",
         reason=reason,
+        caller_actor_id=caller_actor_id,
     )
 
 

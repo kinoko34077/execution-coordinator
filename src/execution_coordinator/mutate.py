@@ -51,8 +51,9 @@ def _apply_to_state(
     payload: dict[str, object],
     idempotency_key: str,
     now: datetime,
+    verified_actor_id: int | None = None,
 ) -> MutationResult:
-    if operation in {"claim", "takeover"}:
+    if operation in {"claim", "takeover", "chat_claim"}:
         common_claim = {
             "task": str(_required(payload, "task")),
             "role": Role(str(_required(payload, "role"))),
@@ -62,8 +63,10 @@ def _apply_to_state(
             "idempotency_key": idempotency_key,
             "base_sha": str(payload["base_sha"]) if payload.get("base_sha") is not None else None,
             "branch": str(payload["branch"]) if payload.get("branch") is not None else None,
+            "claim_source": "github_comment" if operation == "chat_claim" else "internal",
+            "pickup_actor_id": verified_actor_id if operation == "chat_claim" else None,
         }
-        if operation == "claim":
+        if operation in ("claim", "chat_claim"):
             return claim(state, **common_claim)
         return takeover(state, **common_claim)
 
@@ -95,8 +98,10 @@ def _apply_to_state(
         return resume(state, **common_current)
     if operation == "release":
         return release(state, **common_current)
+    if operation == "chat_release":
+        return release(state, **common_current, chat_release=True, caller_actor_id=verified_actor_id)
     if operation == "fail":
-        return fail(state, **common_current, reason=str(_required(payload, "reason")))
+        return fail(state, **common_current, reason=str(_required(payload, "reason")), caller_actor_id=verified_actor_id)
     raise ValueError(f"unsupported operation: {operation}")
 
 
@@ -107,7 +112,10 @@ def apply_mutation(
     payload: dict[str, object],
     idempotency_key: str,
     now: datetime,
+    verified_actor_id: int | None = None,
 ) -> MutationResult:
+    if operation in ("chat_claim", "chat_release") and (type(verified_actor_id) is not int or verified_actor_id < 1):
+        raise ValueError("chat mutation requires independently verified numeric actor ID")
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("now must be timezone-aware")
     if not idempotency_key.strip():
@@ -121,6 +129,7 @@ def apply_mutation(
         payload=payload,
         idempotency_key=idempotency_key,
         now=now.astimezone(timezone.utc),
+        verified_actor_id=verified_actor_id,
     )
     next_body = render_issue_body(existing_body, result.state)
 
@@ -196,12 +205,34 @@ def main(argv: list[str] | None = None) -> int:
         payload = json.loads(args.payload_json)
         if not isinstance(payload, dict):
             raise ValueError("payload JSON must be an object")
+        verified_actor_id = None
+        if args.operation in ("release", "chat_claim", "chat_release", "fail"):
+            from .chat_authority import authorize_internal_release_dispatch
+            # A workflow-dispatch actor must independently be allowed to invoke
+            # the serializer. GitHub comment text cannot grant Actions power.
+            verified_actor_id = authorize_internal_release_dispatch(
+                actor_id=os.environ.get("GITHUB_ACTOR_ID"),
+                actor_login=os.environ.get("GITHUB_ACTOR"),
+                devflow_path=os.environ.get("DEVFLOW_PATH", ""),
+            )
+        if args.operation in ("chat_claim", "chat_release"):
+            from .chat_authority import verify_chat_origin
+            verified_actor_id = verify_chat_origin(
+                payload.get("source_comment_id"),
+                command="pickup" if args.operation == "chat_claim" else "release",
+                claim_id=payload.get("claim_id") if args.operation == "chat_release" else None,
+                generation=payload.get("generation") if args.operation == "chat_release" else None,
+                session=payload.get("session") if args.operation == "chat_release" else None,
+                token=os.environ.get("GITHUB_TOKEN", ""),
+                devflow_path=os.environ.get("DEVFLOW_PATH", ""),
+            )
         result = apply_mutation(
             _build_store_from_env(),
             operation=args.operation,
             payload=payload,
             idempotency_key=args.idempotency_key,
             now=datetime.now(timezone.utc),
+            verified_actor_id=verified_actor_id,
         )
     except (ValueError, GitHubApiError, RuntimeError) as exc:
         print(f"mutation failed: {exc}", file=sys.stderr)
