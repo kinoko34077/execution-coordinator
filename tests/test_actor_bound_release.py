@@ -96,7 +96,7 @@ class ActorBoundReleaseTests(unittest.TestCase):
         payload = {"claim_id": current.claim_id, "generation": current.generation,
                    "source_comment_id": COMMENT_ID, "session": "forged",
                    "actor_id": ID}
-        with self.assertRaises(ValueError):
+        with self.assertRaises(InvalidTransition):
             _apply_to_state(
                 current.state, operation="chat_release", payload=payload,
                 now=T0 + timedelta(minutes=1), idempotency_key="unverified",
