@@ -415,6 +415,11 @@ def _terminal(
     if replay is not None:
         return replay
     current = _require_current(state, claim_id, generation, now=now)
+    if kind == "FAILED" and current.claim_source == "github_comment":
+        # Existing automatic failed-execution cleanup retains system provenance;
+        # a human must instead be the original pickup principal.
+        if type(caller_actor_id) is not int or caller_actor_id not in (current.pickup_actor_id, 41898282):
+            raise InvalidTransition("fail requester is not original pickup actor or established Actions runner")
     if kind == "RELEASED":
         if current.claim_source == "legacy":
             raise InvalidTransition("legacy claim has no verifiable release owner; await expiry")
@@ -468,6 +473,7 @@ def fail(
     now: datetime,
     idempotency_key: str,
     reason: str,
+    caller_actor_id: int | None = None,
 ) -> MutationResult:
     return _terminal(
         state,
@@ -477,6 +483,7 @@ def fail(
         idempotency_key=idempotency_key,
         kind="FAILED",
         reason=reason,
+        caller_actor_id=caller_actor_id,
     )
 
 
