@@ -209,7 +209,8 @@ class WorkflowTests(unittest.TestCase):
     def test_pickup_workflow_contract(self):
         text = (ROOT / ".github/workflows/chat-pickup.yml").read_text(encoding="utf-8")
         self.assertIn("issue_comment:", text)
-        self.assertNotIn('["OWNER","MEMBER","COLLABORATOR"]', text)
+        self.assertIn('["OWNER","MEMBER","COLLABORATOR"]', text)
+        self.assertIn('queue: max', text)
         self.assertIn("actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1", text)
         self.assertIn("actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97", text)
         self.assertIn("python -m execution_coordinator.actions_pickup", text)
