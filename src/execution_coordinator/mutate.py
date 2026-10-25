@@ -206,8 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         if not isinstance(payload, dict):
             raise ValueError("payload JSON must be an object")
         verified_actor_id = None
-        if args.operation == "release":
+        if args.operation in ("release", "chat_claim", "chat_release"):
             from .chat_authority import authorize_internal_release_dispatch
+            # A workflow-dispatch actor must independently be allowed to invoke
+            # the serializer. GitHub comment text cannot grant Actions power.
             authorize_internal_release_dispatch(
                 actor_id=os.environ.get("GITHUB_ACTOR_ID"),
                 actor_login=os.environ.get("GITHUB_ACTOR"),
