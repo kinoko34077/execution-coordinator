@@ -84,7 +84,7 @@ def verify_chat_origin(
     return comment["user"]["id"]
 
 
-def authorize_internal_release_dispatch(*, actor_id: object, actor_login: object, devflow_path: str) -> None:
+def authorize_internal_release_dispatch(*, actor_id: object, actor_login: object, devflow_path: str) -> int:
     """Allow existing machine lifecycle release or canonical human GitHub principal.
 
     Unlike chat release, this path can only release INTERNAL claims; the engine
@@ -105,6 +105,7 @@ def authorize_internal_release_dispatch(*, actor_id: object, actor_login: object
         raise ChatOriginRejected("internal release requires authenticated actor login")
     if numeric_id == 41898282 and actor_login == "github-actions[bot]":
         # Machine lifecycle dispatch from the existing authorized Actions lane.
-        return
+        return numeric_id
     if not shared_trust.is_trusted_principal({"user": {"id": numeric_id, "login": actor_login}}):
-        raise ChatOriginRejected("direct release requester is not allowlisted")
+        raise ChatOriginRejected("direct mutation requester is not allowlisted")
+    return numeric_id
