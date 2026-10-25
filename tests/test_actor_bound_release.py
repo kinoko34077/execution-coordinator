@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import io
 import json
 import types
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
-from execution_coordinator.chat_authority import ChatOriginRejected, verify_chat_origin
+from execution_coordinator.chat_authority import ChatOriginRejected, verify_chat_origin, authorize_internal_release_dispatch
 from execution_coordinator.engine import InvalidTransition, StaleGeneration, claim, expire, release
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.mutate import _apply_to_state
@@ -64,7 +63,6 @@ class ActorBoundReleaseTests(unittest.TestCase):
         legacy = data["claims"][internal.claim_id]
         legacy.pop("claim_source")
         legacy.pop("pickup_actor_id")
-        body = render_issue_body("state\n", internal.state)
         from execution_coordinator.snapshot import state_from_data
         old = state_from_data(data)
         self.assertEqual("legacy", old.claims[internal.claim_id].claim_source)
@@ -113,6 +111,28 @@ class ActorBoundReleaseTests(unittest.TestCase):
             verified_actor_id=ID,
         )
         self.assertNotIn(current.claim_id, success.state.claims)
+
+
+class InternalDispatchActorTests(unittest.TestCase):
+    def check(self, actor_id, actor_login):
+        with patch("execution_coordinator.chat_authority.importlib.import_module") as loader:
+            loader.return_value = types.SimpleNamespace(
+                is_trusted_principal=lambda obj: obj["user"] == {"id": ID, "login": "kinoko34077"}
+            )
+            return authorize_internal_release_dispatch(
+                actor_id=actor_id, actor_login=actor_login, devflow_path="."
+            )
+
+    def test_canonical_human_and_machine_actor(self):
+        self.check(str(ID), "kinoko34077")
+        self.check("41898282", "github-actions[bot]")
+
+    def test_unlisted_and_missing_identity_denied(self):
+        for actor_id, login in ((None, "kinoko34077"), ("not-a-number", "kinoko34077"),
+                                (str(ID + 1), "kinoko34077"),
+                                (str(ID), "attacker"), ("41898282", "kinoko34077")):
+            with self.subTest(actor_id=actor_id, login=login), self.assertRaises(ChatOriginRejected):
+                self.check(actor_id, login)
 
 
 class _FakeResponse:
