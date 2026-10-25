@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from execution_coordinator.chat_authority import ChatOriginRejected, verify_chat_origin, authorize_internal_release_dispatch
-from execution_coordinator.engine import InvalidTransition, StaleGeneration, claim, expire, release
+from execution_coordinator.engine import InvalidTransition, StaleGeneration, claim, expire, release, fail
 from execution_coordinator.model import CoordinatorState, Role
 from execution_coordinator.mutate import _apply_to_state
 from execution_coordinator.snapshot import render_issue_body, parse_issue_body
@@ -50,6 +50,24 @@ class ActorBoundReleaseTests(unittest.TestCase):
                 current.state, claim_id=current.claim_id, generation=current.generation,
                 now=T0 + timedelta(minutes=1), idempotency_key="internal-spoof",
             )
+
+    def test_fail_cannot_be_alternate_untrusted_release(self):
+        current = new_chat_claim()
+        for actor in (None, ID + 1, True, "79015263"):
+            with self.subTest(actor=actor), self.assertRaises(InvalidTransition):
+                fail(
+                    current.state, claim_id=current.claim_id, generation=current.generation,
+                    now=T0 + timedelta(minutes=1), idempotency_key="unauthorized-fail",
+                    reason="external", caller_actor_id=actor,
+                )
+        for actor in (ID, 41898282):
+            with self.subTest(actor=actor):
+                outcome = fail(
+                    current.state, claim_id=current.claim_id, generation=current.generation,
+                    now=T0 + timedelta(minutes=1), idempotency_key=f"authorized-{actor}",
+                    reason="execution-failed", caller_actor_id=actor,
+                )
+                self.assertNotIn(current.claim_id, outcome.state.claims)
 
     def test_old_claim_is_readable_but_cannot_be_manually_released(self):
         internal = claim(
