@@ -62,6 +62,9 @@ class Claim:
     evidence_ref: str | None = None
     base_sha: str | None = None
     branch: str | None = None
+    # V1-compatible additive origin. Legacy snapshots without source are unowned.
+    claim_source: str = "legacy"
+    pickup_actor_id: int | None = None
 
 
 def roles_can_share_conflict_key(left: Role, right: Role) -> bool:
