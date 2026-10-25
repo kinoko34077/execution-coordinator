@@ -16,8 +16,8 @@ jobs:
   pickup:
     if: >-
       !github.event.issue.pull_request &&
-      (startsWith(github.event.comment.body, '/pickup') || startsWith(github.event.comment.body, '/release')) &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      (startsWith(github.event.comment.body, '/pickup') || startsWith(github.event.comment.body, '/release'))
+
     runs-on: ubuntu-latest
     concurrency:
       group: chat-pickup-${{ github.event.issue.number }}
