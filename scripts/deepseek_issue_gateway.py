@@ -159,7 +159,7 @@ def admission_budget(gh_token: str, source_id: object) -> None:
         body = item.get("body") or ""
         if not isinstance(body, str):
             raise Refused("invalid stored comment")
-        if body.startswith(("### DeepSeek応答", "### DeepSeek参考コードレビュー")):
+        if body.startswith("### DeepSeek実行受付"):
             used += 1
         if target in body:
             raise Refused("event already answered; replay refused")
@@ -284,10 +284,17 @@ def run(event: dict, actor: str, gh_token: str, ds_key: str) -> str | None:
     policy_check(os.environ.get("DEEPSEEK_ENABLED", "true"))
     admission_budget(gh_token, (event.get("comment") or {}).get("id"))
     if mode == "ask":
+        # Reserve a one-use request before network invocation; reruns cannot re-bill.
+        if not ds_key:
+            raise Refused("DEEPSEEK_API_KEY secret is missing")
+        publish(f"### DeepSeek実行受付\n\n{marker}\n\n単発API処理を受付。再実行は拒否します。", gh_token)
         result, usage = deepseek_complete(argument, ds_key, review=False)
         header = f"### DeepSeek応答（参考情報）\n\n{result}"
     else:
         prompt, sha, target = review_prompt(argument, gh_token)
+        if not ds_key:
+            raise Refused("DEEPSEEK_API_KEY secret is missing")
+        publish(f"### DeepSeek実行受付\n\n{marker}\n\n対象: {target}\nHead: `{sha}`。再実行は拒否します。", gh_token)
         result, usage = deepseek_complete(prompt, ds_key, review=True)
         if not still_current(argument, sha, gh_token):
             raise Refused("PR head moved during review; result discarded")
