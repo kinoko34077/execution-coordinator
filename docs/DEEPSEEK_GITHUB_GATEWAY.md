@@ -16,7 +16,8 @@ Post a new single-line Issue comment:
 
 - `/deepseek status`: reports whether the secret is present, whether the switch is ON, and whether this instant is off-peak. **Does not call DeepSeek**.
 - `/deepseek ask 日本語で短い質問`: sends one bounded prompt, posts the response as a comment.
-- `/deepseek cancel 1234567890`: cancels an unstarted queued request using its original GitHub comment ID. The queue receipt includes the exact command. An API request already started cannot be withdrawn.\n- `/deepseek review kinoko34077/execution-coordinator#163`: retrieves a **public** same-owner PR and a bounded patch, pins its head SHA, obtains an advisory review, checks that the PR head is still current, then posts the result in Issue #162. This is **not** a native GitHub Formal Review, required review approval, code change, CI result, or merge permission.
+- `/deepseek cancel 1234567890`: cancels an unstarted queued request using its original GitHub comment ID. The queue receipt includes the exact command. An API request already started cannot be withdrawn.
+- `/deepseek review kinoko34077/execution-coordinator#163`: retrieves a **public** same-owner PR and a bounded patch, pins its head SHA, obtains an advisory review, checks that the PR head is still current, then posts the result in Issue #162. This is **not** a native GitHub Formal Review, required review approval, code change, CI result, or merge permission.
 
 Only exact commands are accepted. Pending tasks are resumed by scheduled GitHub Actions after the blocked window, without requiring a second user message. The ChatGPT GitHub connection can submit such comments on the user's behalf when authorized.
 
@@ -38,7 +39,7 @@ DeepSeek's [official API pricing](https://api-docs.deepseek.com/quick_start/pric
 - Keys are supplied only through Actions secrets; error bodies, keys and raw prompts are not written to Actions logs. Credential-bearing redirects are refused.
 - Server-side DeepSeek usage is metered against the user's configured provider account; this gateway cannot prove account-level prepayment/overage settings. Daily cap and ON/OFF prevent accidental scheduled or replay usage.
 - The first live model call requires the user to register the secret; before that, `/deepseek status` is an uncharged end-to-end transport test.
-- The queue stores request ID and a SHA-256 digest of its contents; edited queued requests are refused. Cancel via `/deepseek cancel <original-comment-id>` before execution starts. No automatic retries after uncertain provider execution; subsequent submissions need a new owner comment. The queue fails closed if the Issue history exceeds the bounded paging limit.
+- The queue stores request ID and a SHA-256 digest of its contents; edited queued requests are refused. Pending requests expire after **72 hours**; expired requests are marked terminal without a model call. Cancel via `/deepseek cancel <original-comment-id>` before execution starts. No automatic retries after uncertain provider execution; subsequent submissions need a new owner comment. The queue fails closed if the Issue history exceeds the bounded paging limit.
 
 ## Evidence and verification
 
