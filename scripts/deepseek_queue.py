@@ -11,7 +11,7 @@ from scripts import deepseek_issue_gateway as gw
 URL = f"{gw.HUB}/repos/{gw.OWNER}/execution-coordinator/issues/{gw.ISSUE_NUMBER}/comments"
 QUEUE = re.compile(r"<!-- dsq:v1 id=(\d+) sha=([0-9a-f]{64}) -->")
 CANCEL = re.compile(r"<!-- dsc:v1 id=(\d+) -->")
-START = re.compile(r"^### DeepSeek実行受付\s*\n\s*GitHub comment #(\d+)", re.M)
+START = re.compile(r"\A### DeepSeek実行受付\s*\n\s*GitHub comment #(\d+)")
 FINISH = re.compile(r"<!-- dsd:v1 id=(\d+) -->")
 CANCEL_CMD = re.compile(r"^/deepseek cancel ([1-9]\d{0,18})$")
 MAX_PAGES = 10
