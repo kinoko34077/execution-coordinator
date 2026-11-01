@@ -183,3 +183,57 @@ def scheduled_once(token: str, key: str, rows: list[dict]) -> str | None:
         if state(rows, row["id"])[0] == "queued":
             return run_one(row, token, key, rows)
     return None
+
+
+def issue_event(event: dict, actor: str, token: str, key: str) -> str | None:
+    cancellation = cancellation_target(event, actor)
+    accepted = gw.admission(event, actor)
+    if cancellation is None and accepted is None:
+        return None
+    if accepted and accepted[0] == "status":
+        return gw.run(event, actor, token, key)
+    rows = records(token)
+    if cancellation is not None:
+        return cancel_reply(cancellation, rows)
+    if accepted is None or accepted[0] not in ("ask", "review"):
+        return None
+    # New commands remain pending even if the switch is currently OFF.
+    # A cancelled request cannot be resurrected when switched back ON.
+    if not key or not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
+        return queue_reply(event["comment"], rows)
+    if not gw.offpeak_allowed():
+        return queue_reply(event["comment"], rows)
+    return run_one(event["comment"], token, key, rows)
+
+
+def main() -> int:
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if not token:
+        print("GitHub token missing")
+        return 1
+    try:
+        key = os.environ.get("DEEPSEEK_API_KEY", "")
+        if os.environ.get("GITHUB_EVENT_NAME") == "schedule":
+            if not key or not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
+                return 0
+            if not gw.offpeak_allowed():
+                return 0
+            reply = scheduled_once(token, key, records(token))
+        else:
+            with open(os.environ["GITHUB_EVENT_PATH"], encoding="utf-8") as stream:
+                event = json.load(stream)
+            reply = issue_event(event, os.environ.get("GITHUB_ACTOR", ""), token, key)
+        if reply is not None:
+            gw.publish(reply, token)
+        print("DeepSeek queue cycle complete; no private content logged.")
+        return 0
+    except gw.Refused as exc:
+        print("DeepSeek queue held: " + str(exc))
+        return 0
+    except Exception:
+        print("DeepSeek queue error; no input, output or secret logged.")
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
