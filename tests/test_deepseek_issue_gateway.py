@@ -126,5 +126,32 @@ class DeepSeekAdmissionTests(unittest.TestCase):
                 gw.review_prompt(ref,"fake-gh")
 
 
+    def test_daily_limit_rejects_existing_20_reservations(self):
+        history=[{"user":{"login":"github-actions[bot]"},"body":"### DeepSeek実行受付\\n\\nGitHub comment #"+str(i)} for i in range(20)]
+        with patch.dict(os.environ, {"DEEPSEEK_DAILY_LIMIT":"20"}), patch.object(gw,"request_json",return_value=history):
+            with self.assertRaisesRegex(gw.Refused,"daily"):
+                gw.admission_budget("fake-gh",42)
+
+    def test_duplicate_request_fails_before_model_call(self):
+        history=[{"user":{"login":"github-actions[bot]"},"body":"### DeepSeek実行受付\\n\\nGitHub comment #42"}]
+        with patch.dict(os.environ, {"DEEPSEEK_DAILY_LIMIT":"20"}), patch.object(gw,"request_json",return_value=history):
+            with self.assertRaisesRegex(gw.Refused,"already answered"):
+                gw.admission_budget("fake-gh",42)
+
+    def test_missing_comment_history_fails_closed(self):
+        with patch.object(gw,"request_json",return_value=[{"user":{"login":"nobody"}}]*100):
+            with self.assertRaises(gw.Refused):
+                gw.admission_budget("fake-gh",42)
+
+    def test_redirects_are_forbidden(self):
+        self.assertIsNone(gw._NoCrossOriginRedirect().redirect_request(None,None,302,"redirect",{},"https://evil.example/path"))
+
+    def test_issue_owner_id_enforced_even_if_bot_is_the_actor(self):
+        ev=event()
+        ev["sender"]["login"]=gw.BOT
+        ev["comment"]["user"]["id"]=0
+        self.assertIsNone(gw.admission(ev,gw.BOT))
+
+
 if __name__ == "__main__":
     unittest.main()
