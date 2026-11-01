@@ -11,7 +11,7 @@ def event(command="/deepseek status", actor="kinoko34077"):
     return {
         "action": "created",
         "issue": {"number": 162, "user": {"id": 79015263}},
-        "comment": {"id": 42, "body": command, "user": {"login": actor}},
+        "comment": {"id": 42, "body": command, "user": {"login": actor, "id": 79015263 if actor == "kinoko34077" else 0}},
         "sender": {"login": actor},
     }
 
@@ -86,7 +86,9 @@ class DeepSeekAdmissionTests(unittest.TestCase):
         self.assertEqual(gw.admission(event(), "kinoko34077"), ("status", ""))
         self.assertEqual(gw.admission(event("/deepseek ask hello"),"kinoko34077"), ("ask", "hello"))
         self.assertEqual(gw.admission(event("/deepseek review kinoko34077/devflow#12"), "kinoko34077"), ("review","kinoko34077/devflow#12"))
-        self.assertEqual(gw.admission(event("/deepseek status",gw.BOT),gw.BOT),("status",""))
+        via_connector=event()
+        via_connector["sender"]["login"]=gw.BOT
+        self.assertEqual(gw.admission(via_connector,gw.BOT),("status",""))
 
     def test_reject_untrusted_and_invalid_scope(self):
         for text in ("bad", "/deepseek status extra","/deepseek ask","/deepseek review other/repo#1","/deepseek review kinoko34077/devflow#0","/deepseek ask abc\nmalicious"):
