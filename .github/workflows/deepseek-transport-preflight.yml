@@ -15,7 +15,8 @@ jobs:
       github.event.issue.number == 162 &&
       github.event.issue.user.id == 79015263 &&
       (github.actor == 'kinoko34077' || github.actor == 'chatgpt-codex-connector[bot]') &&
-      (github.event.comment.user.login == 'kinoko34077' || github.event.comment.user.login == 'chatgpt-codex-connector[bot]') &&
+      github.event.comment.user.id == 79015263 &&
+      github.event.comment.user.login == 'kinoko34077' &&
       startsWith(github.event.comment.body, '/deepseek ')
     runs-on: ubuntu-latest
     timeout-minutes: 3
