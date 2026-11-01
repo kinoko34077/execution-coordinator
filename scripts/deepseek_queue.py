@@ -69,12 +69,12 @@ def state(rows: list[dict], source: int) -> tuple[str, str | None]:
             finished = True
         if a and int(a.group(1)) == source:
             started = True
+    if finished:
+        return ("finished", queued)
     if started:
         return ("started", queued)
     if cancel:
         return ("cancelled", queued)
-    if finished:
-        return ("finished", queued)
     if queued:
         return ("queued", queued)
     return ("new", None)
@@ -151,6 +151,9 @@ def run_one(original: dict, token: str, key: str, rows: list[dict]) -> str | Non
     else:
         prompt, head, label = arg, None, None
     gw.admission_budget(token, source)
+    # Check off-peak and OFF again immediately before the irreversible reservation.
+    # The DeepSeek transport repeats this check before its HTTPS request.
+    gw.policy_check(os.environ.get("DEEPSEEK_ENABLED", "true"))
     # Persist the one-use reservation before any model request; a rerun never re-bills.
     gw.publish(f"### DeepSeek実行受付\n\nGitHub comment #{source}\n\n"
                "この依頼は再実行しません。", token)
