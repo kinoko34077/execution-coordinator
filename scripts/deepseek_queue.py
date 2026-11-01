@@ -125,3 +125,61 @@ def queue_reply(original: dict, rows: list[dict]) -> str:
             f"### DeepSeek自動延期\n\n依頼 #{source} を保存しました。"
             " オフピーク時にGitHub Actionsが順次実行します。\n\n"
             f"取り下げ: `/deepseek cancel {source}`")
+
+
+def run_one(original: dict, token: str, key: str, rows: list[dict]) -> str | None:
+    source = original.get("id")
+    info = parsed(original)
+    if type(source) is not int or info is None:
+        raise gw.Refused("invalid request")
+    current, saved = state(rows, source)
+    if current in ("started", "cancelled", "finished"):
+        return None
+    if current == "queued" and saved != digest(original):
+        return (f"<!-- dsd:v1 id={source} -->\n### DeepSeek依頼無効\n\n"
+                f"依頼 #{source} は予約後に編集されました。")
+    if not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
+        return None
+    if not gw.offpeak_allowed() or not key:
+        return None
+    mode, arg = info
+    if mode == "review":
+        try:
+            prompt, head, label = gw.review_prompt(arg, token)
+        except gw.Refused as exc:
+            return (f"<!-- dsd:v1 id={source} -->\n### DeepSeekレビュー不可\n\n{exc}")
+    else:
+        prompt, head, label = arg, None, None
+    gw.admission_budget(token, source)
+    # Persist the one-use reservation before any model request; a rerun never re-bills.
+    gw.publish(f"### DeepSeek実行受付\n\nGitHub comment #{source}\n\n"
+               "この依頼は再実行しません。", token)
+    try:
+        text, usage = gw.deepseek_complete(prompt, key, review=(mode == "review"))
+        if head is not None:
+            if not gw.still_current(arg, head, token):
+                raise gw.Refused("PR head changed; review output discarded")
+            output = (f"### DeepSeek参考レビュー — {label}\nReviewed head: `{head}`"
+                      f"\n\n{text}\n\n正式GitHub Reviewではありません。")
+        else:
+            output = f"### DeepSeek応答（参考情報）\n\n{text}"
+        return (f"<!-- dsd:v1 id={source} -->\n{output}\n\n"
+                f"依頼 #{source}; 使用トークン: {usage}")
+    except gw.Refused as exc:
+        return (f"<!-- dsd:v1 id={source} -->\n### DeepSeek実行失敗\n\n"
+                f"依頼 #{source}: {exc}。自動再試行はしません。")
+
+
+def scheduled_once(token: str, key: str, rows: list[dict]) -> str | None:
+    if not key or not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
+        return None
+    if not gw.offpeak_allowed():
+        return None
+    candidates = sorted(
+        (r for r in rows if type(r.get("id")) is int and parsed(r)),
+        key=lambda r: r["id"],
+    )
+    for row in candidates:
+        if state(rows, row["id"])[0] == "queued":
+            return run_one(row, token, key, rows)
+    return None
