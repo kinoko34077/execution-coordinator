@@ -5,6 +5,7 @@ import json
 import os
 import re
 import sys
+from datetime import datetime, timezone
 import urllib.error
 import urllib.request
 
@@ -18,10 +19,42 @@ PR_REF = re.compile(r"^(kinoko34077/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,7})$")
 MAX_INPUT = 5000
 MAX_OUTPUT = 10500
 MAX_RESPONSE = 128000
+# DeepSeek official peak windows (UTC), Mon-Fri. Holidays are blocked conservatively.
+# A 2-minute lead-in avoids entering an official peak window during a live request.
+PEAK_WINDOWS_UTC = ((60, 240), (360, 600))
+PEAK_LEAD_MINUTES = 2
 
 
 class Refused(Exception):
     """A request failed a checked admission or bounded response invariant."""
+
+
+def offpeak_allowed(now: datetime | None = None) -> bool:
+    """Only permit API starts outside DeepSeek's UTC weekday peak windows.
+
+    Conservatively block Chinese public holidays too (no holiday service dependency).
+    """
+    now = now or datetime.now(timezone.utc)
+    if now.tzinfo is None:
+        raise Refused("clock must be timezone-aware")
+    utc = now.astimezone(timezone.utc)
+    if utc.weekday() >= 5:
+        return True
+    minute = utc.hour * 60 + utc.minute
+    return all(not (start - PEAK_LEAD_MINUTES <= minute < stop)
+               for start, stop in PEAK_WINDOWS_UTC)
+
+
+def gate_enabled(value: str) -> bool:
+    """Default ON after Secret registration; 'false' gives explicit owner kill switch."""
+    return value.strip().lower() == "true"
+
+
+def policy_check(enabled: str) -> None:
+    if not gate_enabled(enabled):
+        raise Refused("DEEPSEEK_ENABLED is OFF; no model request")
+    if not offpeak_allowed():
+        raise Refused("DeepSeek peak hours or pre-peak buffer; no model request")
 
 
 def request_json(url: str, *, token: str = "", data: dict | None = None) -> dict | list:
@@ -131,6 +164,8 @@ def still_current(ref: str, expected_head: str, gh_token: str) -> bool:
 
 
 def deepseek_complete(prompt: str, api_key: str, *, review: bool) -> tuple[str, dict]:
+    # Recheck immediately before billable network IO, not only when the job starts.
+    policy_check(os.environ.get("DEEPSEEK_ENABLED", "true"))
     if not api_key:
         raise Refused("DEEPSEEK_API_KEY secret is missing")
     payload = {
@@ -186,7 +221,10 @@ def run(event: dict, actor: str, gh_token: str, ds_key: str) -> str | None:
     marker = f"GitHub comment #{(event.get('comment') or {}).get('id', 'unknown')}"
     if mode == "status":
         status = "登録検出" if ds_key else "未登録"
-        return f"### DeepSeek接続状況\n\n- Actions呼出し: 成功\n- `DEEPSEEK_API_KEY`: {status}\n- モデルAPI: 未呼出し（料金発生なし）\n- 対象: {marker}"
+        enabled = gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true"))
+        active = "ON" if enabled else "OFF"
+        period = "OFF-PEAK" if offpeak_allowed() else "PEAK / BLOCKED"
+        return f"### DeepSeek接続状況\n\n- Actions呼出し: 成功\n- `DEEPSEEK_API_KEY`: {status}\n- `DEEPSEEK_ENABLED`: {active}\n- 実行時間判定: {period} (UTC)\n- モデルAPI: 未呼出し（料金発生なし）\n- 対象: {marker}"
     if not gh_token:
         raise Refused("GITHUB_TOKEN missing")
     if mode == "ask":
