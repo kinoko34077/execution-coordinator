@@ -28,7 +28,7 @@ DeepSeek's [official API pricing](https://api-docs.deepseek.com/quick_start/pric
 - In Japan (UTC+9): Monday–Friday **10:00–13:00 JST** and **15:00–19:00 JST**.
 - Officially, Chinese public holidays are excluded; this initial gateway **conservatively blocks the same weekday hours even on Chinese public holidays**, rather than risk a false off-peak classification.
 - The gateway also blocks the **2 minutes before** each peak window starts (09:58–10:00 and 14:58–15:00 JST). Weekends are permitted throughout.
-- The UTC gate is checked before processing and immediately before model HTTP. During peak/pre-peak, an authenticated request is **queued by default** and a GitHub Actions schedule tries again every 15 minutes. Scheduler delivery can be delayed/skipped; it does not guarantee exact start time. `DEEPSEEK_ENABLED=false` retains queued requests without sending them; turning it ON allows future scheduled runs to resume.
+- The UTC gate is checked before processing and immediately before model HTTP. During peak/pre-peak, an authenticated request is **queued by default** and a GitHub Actions schedule tries again every 15 minutes. Scheduler delivery can be delayed/skipped; it does not guarantee exact start time. `DEEPSEEK_ENABLED=false` retains existing queued requests while rejecting new ones; turning it ON resumes future scheduled runs. Requests are also rejected if the API key is not yet configured.
 
 ## Technical and privacy boundaries
 
