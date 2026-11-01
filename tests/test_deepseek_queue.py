@@ -106,12 +106,21 @@ class QueueAdmissionTests(unittest.TestCase):
             self.assertIsNone(q.scheduled_once("t", "k", rows))
             model.assert_not_called()
 
-    def test_off_switch_preserves_new_request_as_pending(self):
+    def test_off_switch_rejects_new_request_but_preserves_old_queue(self):
         row = origin()
         with patch.dict(os.environ, {"DEEPSEEK_ENABLED": "false"}), patch.object(q, "records", return_value=[row]), \
              patch.object(q.gw, "deepseek_complete") as model:
             reply = q.issue_event(webhook(row), "kinoko34077", "t", "k")
-        self.assertIn("dsq:v1", reply)
+        self.assertIn("停止中", reply)
+        self.assertNotIn("dsq:v1", reply)
+        model.assert_not_called()
+
+    def test_missing_key_rejects_new_request(self):
+        row = origin()
+        with patch.dict(os.environ, {"DEEPSEEK_ENABLED": "true"}), patch.object(q, "records", return_value=[row]), \
+             patch.object(q.gw, "deepseek_complete") as model:
+            reply = q.issue_event(webhook(row), "kinoko34077", "t", "")
+        self.assertIn("DEEPSEEK_API_KEY", reply)
         model.assert_not_called()
 
     def test_history_fails_closed_on_full_page_limit(self):
