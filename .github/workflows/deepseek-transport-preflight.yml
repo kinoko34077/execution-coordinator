@@ -1,6 +1,6 @@
 name: DeepSeek GitHub Issue gateway
 
-# Fixed Issue-only commands. NO cron, NO PR-event model calls, NO merges.
+# Fixed owner Issue commands and scheduled pending-queue drain; no PR-event model calls or merges.
 on:
   issue_comment:
     types: [created]
@@ -38,7 +38,7 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.11'
-      - name: Run bounded DeepSeek request (off-peak / user switch enforced in Python)
+      - name: Drain off-peak queue or record owner command (OFF switch enforced)
         env:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
