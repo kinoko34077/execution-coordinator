@@ -1,0 +1,26 @@
+name: DeepSeek transport preflight (no API or secrets)
+
+# Deliberately no Secret and no DeepSeek call. This proves only GitHub event transport.
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  no-secret-probe:
+    if: >-
+      github.repository == 'kinoko34077/execution-coordinator' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.number == 162 &&
+      github.event.comment.body == '/deepseek transport probe' &&
+      (github.actor == 'kinoko34077' || github.actor == 'chatgpt-codex-connector[bot]')
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions: {}
+    steps:
+      - name: Record transport only, with no input text execution
+        shell: bash
+        run: |
+          printf '%s\n' 'Result: Actions received a fixed owner-or-connected-app transport probe.' >> "$GITHUB_STEP_SUMMARY"
+          printf '%s\n' 'DeepSeek API: NOT CALLED; Secrets: NOT ACCESSED; Reviewer: NOT RUN.' >> "$GITHUB_STEP_SUMMARY"
