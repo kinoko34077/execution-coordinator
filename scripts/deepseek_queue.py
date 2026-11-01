@@ -78,3 +78,50 @@ def state(rows: list[dict], source: int) -> tuple[str, str | None]:
     if queued:
         return ("queued", queued)
     return ("new", None)
+
+
+def cancellation_target(event: dict, actor: str) -> int | None:
+    comment = event.get("comment") or {}
+    body = comment.get("body")
+    if not isinstance(body, str):
+        return None
+    m = CANCEL_CMD.fullmatch(body.strip())
+    if not m:
+        return None
+    # Reuse the owning account numeric-ID and sender admission.
+    virtual = {**event, "comment": {**comment, "body": "/deepseek status"}}
+    if gw.admission(virtual, actor) != ("status", ""):
+        return None
+    return int(m.group(1))
+
+
+def cancel_reply(source: int, rows: list[dict]) -> str:
+    original = next((x for x in rows if x.get("id") == source), None)
+    if original is None or parsed(original) is None:
+        return "### DeepSeek取り下げ不可\n\n該当する依頼はありません。"
+    current, _ = state(rows, source)
+    if current == "started":
+        return f"### DeepSeek取り下げ不可\n\n依頼 #{source} は実行開始済みです。"
+    if current == "finished":
+        return f"### DeepSeek取り下げ不可\n\n依頼 #{source} は完了済みです。"
+    if current == "cancelled":
+        return f"### DeepSeek取り下げ済み\n\n依頼 #{source} は既に取消済みです。"
+    return (f"<!-- dsc:v1 id={source} -->\n### DeepSeek取り下げ完了\n\n"
+            f"依頼 #{source} を取り下げました。")
+
+
+def queue_reply(original: dict, rows: list[dict]) -> str:
+    source = original.get("id")
+    if type(source) is not int or source <= 0 or parsed(original) is None:
+        raise gw.Refused("invalid request origin")
+    current, _ = state(rows, source)
+    if current != "new":
+        return f"### DeepSeek重複受付拒否\n\n依頼 #{source} は {current} です。"
+    pending = sum(state(rows, row["id"])[0] == "queued"
+                  for row in rows if type(row.get("id")) is int and parsed(row))
+    if pending >= 100:
+        raise gw.Refused("pending queue is full")
+    return (f"<!-- dsq:v1 id={source} sha={digest(original)} -->\n"
+            f"### DeepSeek自動延期\n\n依頼 #{source} を保存しました。"
+            " オフピーク時にGitHub Actionsが順次実行します。\n\n"
+            f"取り下げ: `/deepseek cancel {source}`")
