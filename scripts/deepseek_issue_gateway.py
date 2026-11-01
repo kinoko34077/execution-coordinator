@@ -93,11 +93,14 @@ def admission(event: dict, actor: str) -> tuple[str, str] | None:
         return None
     if (issue.get("user") or {}).get("id") != 79015263:
         return None
-    admitted = {OWNER, BOT}
-    author = (comment.get("user") or {}).get("login")
-    if actor not in admitted or sender.get("login") not in admitted or author not in admitted:
+    # The connector bot is a transport actor, NOT an independent spending principal.
+    # The actual comment author must be the verified repository owner account.
+    author = comment.get("user") or {}
+    if author.get("id") != 79015263 or author.get("login") != OWNER:
         return None
-    if actor != sender.get("login") and actor != author:
+    if actor not in {OWNER, BOT} or sender.get("login") not in {OWNER, BOT}:
+        return None
+    if actor not in {sender.get("login"), author.get("login")}:
         return None
     body = comment.get("body")
     if not isinstance(body, str) or len(body) > MAX_INPUT + 100:
