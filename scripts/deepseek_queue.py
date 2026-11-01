@@ -5,6 +5,7 @@ import hashlib
 import json
 import os
 import re
+from datetime import datetime, timedelta, timezone
 
 from scripts import deepseek_issue_gateway as gw
 
@@ -15,6 +16,7 @@ START = re.compile(r"\A### DeepSeek実行受付\s*\n\s*GitHub comment #(\d+)")
 FINISH = re.compile(r"<!-- dsd:v1 id=(\d+) -->")
 CANCEL_CMD = re.compile(r"^/deepseek cancel ([1-9]\d{0,18})$")
 MAX_PAGES = 10
+MAX_QUEUED_AGE = timedelta(days=3)
 
 
 def records(token: str) -> list[dict]:
@@ -45,6 +47,21 @@ def parsed(row: dict) -> tuple[str, str] | None:
     if mode == "review" and gw.PR_REF.fullmatch(arg):
         return (mode, arg)
     return None
+
+
+def fresh_request(row: dict, now: datetime | None = None) -> bool:
+    stamp = row.get("created_at")
+    if not isinstance(stamp, str):
+        return False
+    try:
+        submitted = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if submitted.tzinfo is None:
+        return False
+    present = now or datetime.now(timezone.utc)
+    age = present.astimezone(timezone.utc) - submitted.astimezone(timezone.utc)
+    return timedelta(0) <= age <= MAX_QUEUED_AGE
 
 
 def digest(row: dict) -> str:
@@ -138,6 +155,9 @@ def run_one(original: dict, token: str, key: str, rows: list[dict]) -> str | Non
     if current == "queued" and saved != digest(original):
         return (f"<!-- dsd:v1 id={source} -->\n### DeepSeek依頼無効\n\n"
                 f"依頼 #{source} は予約後に編集されました。")
+    if not fresh_request(original):
+        return (f"<!-- dsd:v1 id={source} -->\n### DeepSeek依頼期限切れ\n\n"
+                f"依頼 #{source} は72時間の有効期限を超えたため実行しません。")
     if not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
         return None
     if not gw.offpeak_allowed() or not key:
