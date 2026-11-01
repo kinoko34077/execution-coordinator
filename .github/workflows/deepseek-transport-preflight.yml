@@ -1,0 +1,43 @@
+name: DeepSeek GitHub Issue gateway
+
+# Fixed Issue-only commands. NO cron, NO PR-event model calls, NO merges.
+on:
+  issue_comment:
+    types: [created]
+
+permissions: {}
+
+jobs:
+  deepseek-command:
+    if: >-
+      github.repository == 'kinoko34077/execution-coordinator' &&
+      github.event.issue.pull_request == null &&
+      github.event.issue.number == 162 &&
+      github.event.issue.user.id == 79015263 &&
+      (github.actor == 'kinoko34077' || github.actor == 'chatgpt-codex-connector[bot]') &&
+      github.event.comment.user.id == 79015263 &&
+      github.event.comment.user.login == 'kinoko34077' &&
+      startsWith(github.event.comment.body, '/deepseek ')
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    concurrency:
+      group: deepseek-issue-162-serialized
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
+        with:
+          python-version: '3.11'
+      - name: Run bounded DeepSeek request (off-peak / user switch enforced in Python)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+          DEEPSEEK_ENABLED: ${{ vars.DEEPSEEK_ENABLED || 'true' }}
+          DEEPSEEK_DAILY_LIMIT: ${{ vars.DEEPSEEK_DAILY_LIMIT || '20' }}
+        run: python scripts/deepseek_issue_gateway.py
