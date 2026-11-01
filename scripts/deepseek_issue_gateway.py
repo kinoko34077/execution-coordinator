@@ -5,7 +5,7 @@ import json
 import os
 import re
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import urllib.error
 import urllib.request
 
@@ -19,6 +19,7 @@ PR_REF = re.compile(r"^(kinoko34077/[A-Za-z0-9_.-]+)#([1-9][0-9]{0,7})$")
 MAX_INPUT = 5000
 MAX_OUTPUT = 10500
 MAX_RESPONSE = 128000
+DAILY_LIMIT_DEFAULT = 20
 # DeepSeek official peak windows (UTC), Mon-Fri. Holidays are blocked conservatively.
 # A 2-minute lead-in avoids entering an official peak window during a live request.
 PEAK_WINDOWS_UTC = ((60, 240), (360, 600))
@@ -27,6 +28,16 @@ PEAK_LEAD_MINUTES = 2
 
 class Refused(Exception):
     """A request failed a checked admission or bounded response invariant."""
+
+
+class _NoCrossOriginRedirect(urllib.request.HTTPRedirectHandler):
+    """Never forward a bearer credential to a redirected destination."""
+
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        return None
+
+
+_HTTP = urllib.request.build_opener(_NoCrossOriginRedirect)
 
 
 def offpeak_allowed(now: datetime | None = None) -> bool:
@@ -66,7 +77,7 @@ def request_json(url: str, *, token: str = "", data: dict | None = None) -> dict
         content = json.dumps(data, ensure_ascii=False).encode("utf-8")
         headers["Content-Type"] = "application/json"
     try:
-        with urllib.request.urlopen(
+        with _HTTP.open(
             urllib.request.Request(url, data=content, headers=headers), timeout=35
         ) as resp:
             raw = resp.read(MAX_RESPONSE + 1)
@@ -116,6 +127,44 @@ def admission(event: dict, actor: str) -> tuple[str, str] | None:
     if mode == "review" and not PR_REF.fullmatch(arg):
         return None
     return mode, arg
+
+
+def admission_budget(gh_token: str, source_id: object) -> None:
+    """Reject duplicate event delivery or an unexpected burst of one-off calls.
+
+    This is an optional guard over ordinary issue comments, not a credit ledger.
+    If the response is paginated or untrusted, fail closed.
+    """
+    try:
+        limit = int(os.environ.get("DEEPSEEK_DAILY_LIMIT", str(DAILY_LIMIT_DEFAULT)))
+    except ValueError:
+        raise Refused("invalid daily limit setting") from None
+    if not 1 <= limit <= 100:
+        raise Refused("daily limit out of range")
+    today = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    since = today.strftime("%Y-%m-%dT%H:%M:%SZ")
+    history = request_json(
+        f"{HUB}/repos/{OWNER}/execution-coordinator/issues/{ISSUE_NUMBER}/comments"
+        f"?per_page=100&since={since}", token=gh_token
+    )
+    if not isinstance(history, list) or len(history) == 100:
+        raise Refused("comment history incomplete; not sending model request")
+    target = f"GitHub comment #{source_id}"
+    used = 0
+    for item in history:
+        if not isinstance(item, dict):
+            raise Refused("invalid comment history")
+        if (item.get("user") or {}).get("login") != "github-actions[bot]":
+            continue
+        body = item.get("body") or ""
+        if not isinstance(body, str):
+            raise Refused("invalid stored comment")
+        if body.startswith(("### DeepSeek応答", "### DeepSeek参考コードレビュー")):
+            used += 1
+        if target in body:
+            raise Refused("event already answered; replay refused")
+    if used >= limit:
+        raise Refused("daily DeepSeek request limit reached")
 
 
 def review_prompt(ref: str, gh_token: str) -> tuple[str, str, str]:
@@ -205,7 +254,9 @@ def deepseek_complete(prompt: str, api_key: str, *, review: bool) -> tuple[str, 
         if type(val) is int and 0 <= val <= 100000:
             safe_usage[key] = val
     # Neutralize GitHub mention notifications in model-generated text.
-    return answer.replace("@", "@\u200b"), safe_usage
+    # Model content is always data; avoid bot mentions and protocol-looking HTML.
+    safe_answer = answer.replace("@", "@\u200b").replace("<!--", "&lt;!--")
+    return safe_answer, safe_usage
 
 
 def publish(body: str, gh_token: str) -> None:
@@ -230,6 +281,8 @@ def run(event: dict, actor: str, gh_token: str, ds_key: str) -> str | None:
         return f"### DeepSeek接続状況\n\n- Actions呼出し: 成功\n- `DEEPSEEK_API_KEY`: {status}\n- `DEEPSEEK_ENABLED`: {active}\n- 実行時間判定: {period} (UTC)\n- モデルAPI: 未呼出し（料金発生なし）\n- 対象: {marker}"
     if not gh_token:
         raise Refused("GITHUB_TOKEN missing")
+    policy_check(os.environ.get("DEEPSEEK_ENABLED", "true"))
+    admission_budget(gh_token, (event.get("comment") or {}).get("id"))
     if mode == "ask":
         result, usage = deepseek_complete(argument, ds_key, review=False)
         header = f"### DeepSeek応答（参考情報）\n\n{result}"
