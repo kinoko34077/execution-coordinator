@@ -66,5 +66,60 @@ class QueueAdmissionTests(unittest.TestCase):
         self.assertIn("依頼無効", reply)
 
 
+    def test_cancelled_queue_not_drained(self):
+        row = origin()
+        rows = [row, queued(row), bot("<!-- dsc:v1 id=101 -->")]
+        with patch.object(q.gw, "offpeak_allowed", return_value=True), patch.object(q, "run_one") as runner:
+            self.assertIsNone(q.scheduled_once("t", "k", rows))
+            runner.assert_not_called()
+
+    def test_paused_queue_not_drained(self):
+        row = origin()
+        with patch.dict(os.environ, {"DEEPSEEK_ENABLED": "false"}), patch.object(q, "run_one") as runner:
+            self.assertIsNone(q.scheduled_once("t", "k", [row, queued(row)]))
+            runner.assert_not_called()
+
+    def test_peak_schedule_not_executed(self):
+        row = origin()
+        with patch.object(q.gw, "offpeak_allowed", return_value=False), patch.object(q, "run_one") as runner:
+            self.assertIsNone(q.scheduled_once("t", "k", [row, queued(row)]))
+            runner.assert_not_called()
+
+    def test_offpeak_drains_one_queue_without_real_network(self):
+        row = origin()
+        rows = [row, queued(row)]
+        with patch.dict(os.environ, {"DEEPSEEK_ENABLED": "true"}), \
+             patch.object(q.gw, "offpeak_allowed", return_value=True), \
+             patch.object(q.gw, "admission_budget"), \
+             patch.object(q.gw, "deepseek_complete", return_value=("mock answer", {"total_tokens": 4})) as model, \
+             patch.object(q.gw, "publish") as publisher:
+            reply = q.scheduled_once("t", "k", rows)
+        self.assertIn("mock answer", reply)
+        self.assertIn("dsd:v1 id=101", reply)
+        self.assertEqual(model.call_count, 1)
+        publisher.assert_called_once()
+
+    def test_started_request_never_replayed(self):
+        row = origin()
+        rows = [row, queued(row), bot("### DeepSeek実行受付\n\nGitHub comment #101")]
+        with patch.object(q.gw, "offpeak_allowed", return_value=True), patch.object(q.gw, "deepseek_complete") as model:
+            self.assertIsNone(q.scheduled_once("t", "k", rows))
+            model.assert_not_called()
+
+    def test_off_switch_preserves_new_request_as_pending(self):
+        row = origin()
+        with patch.dict(os.environ, {"DEEPSEEK_ENABLED": "false"}), patch.object(q, "records", return_value=[row]), \
+             patch.object(q.gw, "deepseek_complete") as model:
+            reply = q.issue_event(webhook(row), "kinoko34077", "t", "k")
+        self.assertIn("dsq:v1", reply)
+        model.assert_not_called()
+
+    def test_history_fails_closed_on_full_page_limit(self):
+        with patch.object(q.gw, "request_json", return_value=[{}] * 100):
+            with self.assertRaises(q.gw.Refused):
+                q.records("t")
+
+
+
 if __name__ == "__main__":
     unittest.main()
