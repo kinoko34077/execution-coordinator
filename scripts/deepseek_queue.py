@@ -200,10 +200,11 @@ def issue_event(event: dict, actor: str, token: str, key: str) -> str | None:
         return cancel_reply(cancellation, rows)
     if accepted is None or accepted[0] not in ("ask", "review"):
         return None
-    # New commands remain pending even if the switch is currently OFF.
-    # A cancelled request cannot be resurrected when switched back ON.
-    if not key or not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
-        return queue_reply(event["comment"], rows)
+    # OFF stops new admissions, while preserving requests previously queued.
+    if not gw.gate_enabled(os.environ.get("DEEPSEEK_ENABLED", "true")):
+        return "### DeepSeek停止中\n\n新規受付は停止中です。既存の予約は保持します。"
+    if not key:
+        return "### DeepSeek未設定\n\nDEEPSEEK_API_KEY を登録してから依頼してください。"
     if not gw.offpeak_allowed():
         return queue_reply(event["comment"], rows)
     return run_one(event["comment"], token, key, rows)
