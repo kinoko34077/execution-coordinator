@@ -39,4 +39,5 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
           DEEPSEEK_ENABLED: ${{ vars.DEEPSEEK_ENABLED || 'true' }}
+          DEEPSEEK_DAILY_LIMIT: ${{ vars.DEEPSEEK_DAILY_LIMIT || '20' }}
         run: python scripts/deepseek_issue_gateway.py
