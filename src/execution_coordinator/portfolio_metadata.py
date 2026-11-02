@@ -380,6 +380,40 @@ def parse_portfolio_metadata(
     return tuple(by_key[key] for key in sorted(by_key, key=lambda item: (item[0], item[1].value)))
 
 
+def parse_repository_work_classes(
+    control: IssueDocument,
+    *,
+    candidates: Iterable[ClaimCandidate],
+    now: datetime,
+) -> tuple[tuple[str, Role, str], ...]:
+    """Use a bound explicit class in repository-scoped pickup, if declared.
+
+    Legacy Controls without an explicit portfolio work_class keep their
+    existing role fallback. An explicitly advertised class must pass the
+    same strict candidate digest/fingerprint/freshness checks as portfolio
+    pickup; malformed partial blocks never confer a class.
+    """
+
+    body = control.body
+    begin = body.find(PORTFOLIO_MARKER_BEGIN)
+    end = body.find(PORTFOLIO_MARKER_END)
+    if begin < 0 or end < 0:
+        if begin >= 0 and '"work_class"' in body[begin:]:
+            raise PortfolioMetadataError(
+                "declared work_class requires complete bound portfolio metadata"
+            )
+        return ()
+    if '"work_class"' not in body[begin:end]:
+        return ()
+
+    items = parse_portfolio_metadata(control, candidates=candidates, now=now)
+    return tuple(
+        (item.ranking.task, item.ranking.role, item.work_class)
+        for item in items
+        if item.work_class is not None
+    )
+
+
 def parse_repository_reviewer_requirements(
     control: IssueDocument,
     *,

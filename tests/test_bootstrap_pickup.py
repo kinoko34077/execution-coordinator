@@ -5,7 +5,7 @@ import io
 import json
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 from execution_coordinator.bootstrap_pickup import (
@@ -262,7 +262,7 @@ class GatherEvidenceTests(unittest.TestCase):
         self.assertEqual((), candidates)
 
 
-def _portfolio_control(repository, control_number, task_number, *, priority="P2", metadata=True, next_action="`[IMPLEMENT] task`", ready_at=None):
+def _portfolio_control(repository, control_number, task_number, *, priority="P2", metadata=True, next_action="`[IMPLEMENT] task`", ready_at=None, work_class=None):
     task_body = f"## Scope\n\n{repository} bounded task"
     role = Role.IMPLEMENTER
     task_ref = f"{repository}#{task_number}"
@@ -296,6 +296,8 @@ def _portfolio_control(repository, control_number, task_number, *, priority="P2"
             "observed_at": "2026-09-28T15:55:00Z", "fresh_until": "2026-09-28T16:10:00Z",
         }],
     }
+    if work_class is not None:
+        portfolio["entries"][0]["work_class"] = work_class
     pblock = (
         "\n<!-- DEVFLOW_EXECUTION_PORTFOLIO_METADATA_V1_BEGIN -->\n"
         + json.dumps(portfolio)
@@ -319,6 +321,63 @@ def _portfolio_control(repository, control_number, task_number, *, priority="P2"
 
 
 class PortfolioGatherEvidenceTests(unittest.TestCase):
+    def test_targeted_explicit_audit_class_uses_same_bound_metadata_as_portfolio(self):
+        control, task, _candidate = _portfolio_control(
+            "owner/a", 201, 8, work_class="audit",
+        )
+        targeted, _ = gather_evidence(
+            GatherInputs(
+                target_repository="owner/a", worker_id="chatgpt:s1",
+                control_documents=(control,), agents_md_read=True,
+            ),
+            issue_reader=_Reader(control, task), state_reader=_Store(), now=NOW,
+        )
+        portfolio, _ = gather_evidence(
+            GatherInputs(
+                target_repository=None, worker_id="chatgpt:s1",
+                control_documents=(control,), agents_md_read=True,
+            ),
+            issue_reader=_Reader(control, task), state_reader=_Store(), now=NOW,
+        )
+        self.assertTrue(targeted["frontier"]["complete"])
+        self.assertEqual("audit", targeted["frontier"]["candidates"][0]["work_class"])
+        self.assertEqual("audit", portfolio["frontier"]["candidates"][0]["work_class"])
+
+    def test_targeted_legacy_control_keeps_existing_role_fallback(self):
+        control, task, _ = _portfolio_control("owner/a", 201, 8, metadata=False)
+        evidence, _ = gather_evidence(
+            GatherInputs(
+                target_repository="owner/a", worker_id="chatgpt:s1",
+                control_documents=(control,), agents_md_read=True,
+            ),
+            issue_reader=_Reader(control, task), state_reader=_Store(), now=NOW,
+        )
+        self.assertTrue(evidence["frontier"]["complete"])
+        self.assertNotIn("work_class", evidence["frontier"]["candidates"][0])
+
+    def test_targeted_invalid_and_stale_advertised_class_fails_closed(self):
+        control, task, _ = _portfolio_control("owner/a", 201, 8, work_class="audit")
+        invalid = _doc(
+            "kinoko34077/devflow", 201,
+            control.body.replace('"work_class": "audit"', '"work_class": "invalid"'),
+            title=control.title,
+        )
+        for observed_control, now in (
+            (invalid, NOW),
+            (control, NOW + timedelta(minutes=11)),
+        ):
+            with self.subTest(malformed=observed_control is invalid):
+                evidence, _ = gather_evidence(
+                    GatherInputs(
+                        target_repository="owner/a", worker_id="chatgpt:s1",
+                        control_documents=(observed_control,), agents_md_read=True,
+                    ),
+                    issue_reader=_Reader(observed_control, task),
+                    state_reader=_Store(), now=now,
+                )
+                self.assertFalse(evidence["frontier"]["complete"])
+                self.assertEqual([], evidence["frontier"]["candidates"])
+
     def test_null_target_builds_complete_two_repository_frontier(self):
         ca, ta, _ = _portfolio_control("owner/a", 201, 8, priority="P1")
         cb, tb, _ = _portfolio_control("owner/b", 202, 9, priority="P2")

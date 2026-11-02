@@ -46,6 +46,7 @@ from .portfolio_metadata import (
     PortfolioMetadataError,
     WORK_CLASSES,
     parse_repository_reviewer_requirements,
+    parse_repository_work_classes,
 )
 from .query import ClaimabilityReason, ClaimCandidate, StateReader, get_state_result
 from .portfolio_runtime import read_portfolio_runtime
@@ -227,7 +228,16 @@ def gather_evidence(
         reviewer_requirement_by_key: dict[
             tuple[str, Role], DifferentReviewerRequirement
         ] = {}
+        work_class_by_key: dict[tuple[str, Role], str] = {}
         try:
+            work_class_by_key = {
+                (task, role): work_class
+                for task, role, work_class in parse_repository_work_classes(
+                    document,
+                    candidates=frontier.fresh_candidates,
+                    now=now,
+                )
+            }
             reviewer_requirement_by_key = {
                 (task, role): requirement
                 for task, role, requirement in parse_repository_reviewer_requirements(
@@ -247,6 +257,7 @@ def gather_evidence(
                     claimability,
                     held,
                     inputs.published,
+                    work_class=work_class_by_key.get((candidate.task, candidate.role)),
                     different_reviewer_requirement=reviewer_requirement_by_key.get(
                         (candidate.task, candidate.role)
                     ),
