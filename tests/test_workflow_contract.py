@@ -36,6 +36,16 @@ class WorkflowContractTests(unittest.TestCase):
             self.assertIn(f"actions/checkout@{CHECKOUT_SHA}", text)
             self.assertIn(f"actions/setup-python@{SETUP_PYTHON_SHA}", text)
 
+    def test_verify_builds_and_imports_the_installed_source_distribution(self) -> None:
+        text = VERIFY_WORKFLOW.read_text(encoding="utf-8")
+        self.assertIn("name: Build and import installed package", text)
+        self.assertIn("python -m pip wheel --no-deps", text)
+        self.assertIn("--find-links \"$RUNNER_TEMP/coordinator-wheel\"", text)
+        self.assertIn("--target \"$RUNNER_TEMP/coordinator-install\"", text)
+        self.assertIn('PYTHONPATH="$RUNNER_TEMP/coordinator-install"', text)
+        self.assertIn("from execution_coordinator.query import get_state_result", text)
+        self.assertIn("from execution_coordinator.github_state import GitHubStateStore", text)
+
     def test_mutation_workflow_calls_only_the_coordinator_entrypoint(self) -> None:
         text = MUTATION_WORKFLOW.read_text(encoding="utf-8")
         self.assertIn("python -m execution_coordinator.mutate", text)

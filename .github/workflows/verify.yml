@@ -21,3 +21,25 @@ jobs:
         run: python -W error -m unittest discover -s tests -v
       - name: Compile check
         run: python -m compileall -q src tests
+      - name: Build and import installed package
+        run: |
+          mkdir -p "$RUNNER_TEMP/coordinator-wheel" "$RUNNER_TEMP/coordinator-install"
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/coordinator-wheel" .
+          python -m pip install --no-deps --no-index \
+            --find-links "$RUNNER_TEMP/coordinator-wheel" \
+            --target "$RUNNER_TEMP/coordinator-install" \
+            kinotch-execution-coordinator
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$RUNNER_TEMP/coordinator-install" python - <<'PY'
+          from pathlib import Path
+          import os
+
+          import execution_coordinator
+          from execution_coordinator.github_state import GitHubStateStore
+          from execution_coordinator.query import get_state_result
+
+          installed_root = (Path(os.environ["RUNNER_TEMP"]) / "coordinator-install").resolve()
+          assert Path(execution_coordinator.__file__).resolve().is_relative_to(installed_root)
+          assert callable(get_state_result)
+          assert callable(GitHubStateStore)
+          PY

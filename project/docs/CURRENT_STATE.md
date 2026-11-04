@@ -1,5 +1,13 @@
 # Current State
 
+## 2026-11-05 read-only snapshot package — Issue #167 implementation in review
+
+- [Issue #167](https://github.com/kinoko34077/execution-coordinator/issues/167) packages the existing `execution_coordinator` source as `kinotch-execution-coordinator` for reproducible installation from an immutable source revision. It adds no runtime dependencies and retains Python 3.11+.
+- The public read boundary remains `execution_coordinator.query.get_state_result()` backed by `GitHubStateStore` and the existing strict snapshot parser. Source `updated_at` remains attached to the validated result; parsing, identity checks, state schema and CLI behavior are unchanged.
+- PR validation builds and installs the wheel into an isolated target, then imports from outside the checkout to prove the installed package is used. This does not call GitHub or mutate runtime Issue #3.
+- This package is a source-side prerequisite for devflow #869 R1. It does not integrate Workspace sections, add a second store, or grant Claim, Offer, Provider, credential, permission, schedule or deployment authority. Devflow consumer integration remains a separate devflow-owned Issue after package acceptance.
+- **Current next action:** complete exact-head CI and formal review, merge through the repository's normal guarded path, verify post-main, then create the smallest devflow consumer Issue. Until those gates pass, packaging is implementation in review, not accepted main behavior.
+
 ## 2026-10-26 chat Claim actor-bound release — merged, acceptance in progress
 
 - Security owner [#152](https://github.com/kinoko34077/execution-coordinator/issues/152), reviewed [PR #159](https://github.com/kinoko34077/execution-coordinator/pull/159), merged main `7831162e2299ab7609173c8e1f66b9a7525a2ad1`. Independent Claude Code static security Reviews cover original implementation and exact final PR delta, with zero blocking findings; exact-head PR Verify #40159617602 SUCCESS.
