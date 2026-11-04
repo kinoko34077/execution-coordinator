@@ -1,12 +1,12 @@
 # Current State
 
-## 2026-11-05 read-only snapshot package — Issue #167 implementation in review
+## 2026-11-05 read-only snapshot package — Issue #167 accepted on main
 
-- [Issue #167](https://github.com/kinoko34077/execution-coordinator/issues/167) packages the existing `execution_coordinator` source as `kinotch-execution-coordinator` for reproducible installation from an immutable source revision. It adds no runtime dependencies and retains Python 3.11+.
+- [Issue #167](https://github.com/kinoko34077/execution-coordinator/issues/167) packages the existing `execution_coordinator` source as `kinotch-execution-coordinator` for reproducible installation from an immutable source revision. [PR #168](https://github.com/kinoko34077/execution-coordinator/pull/168) merged at `00fb0a76268b45d13c0d6fe5598fa961f3298d7d`; its reviewed head was `1f07b29179e4f6b1218521cc222f8e16bb12be07`. It adds no runtime dependencies and retains Python 3.11+.
 - The public read boundary remains `execution_coordinator.query.get_state_result()` backed by `GitHubStateStore` and the existing strict snapshot parser. Source `updated_at` remains attached to the validated result; parsing, identity checks, state schema and CLI behavior are unchanged.
-- PR validation builds and installs the wheel into an isolated target, then imports from outside the checkout to prove the installed package is used. This does not call GitHub or mutate runtime Issue #3.
+- Exact-head Required Verify [run #41924194996](https://github.com/kinoko34077/execution-coordinator/actions/runs/41924194996) and merged-main Verify [run #41926408034](https://github.com/kinoko34077/execution-coordinator/actions/runs/41926408034) both succeeded. Verification builds and installs the wheel into an isolated target, imports from outside the checkout, exercises the installed read call against offline metadata and rejects malformed snapshots. This does not call GitHub or mutate runtime Issue #3.
 - This package is a source-side prerequisite for devflow #869 R1. It does not integrate Workspace sections, add a second store, or grant Claim, Offer, Provider, credential, permission, schedule or deployment authority. Devflow consumer integration remains a separate devflow-owned Issue after package acceptance.
-- **Current next action:** complete exact-head CI and formal review, merge through the repository's normal guarded path, verify post-main, then create the smallest devflow consumer Issue. Until those gates pass, packaging is implementation in review, not accepted main behavior.
+- Formal exact-head COMMENT review [#5776772553](https://github.com/kinoko34077/execution-coordinator/pull/168#pullrequestreview-5776772553) recorded no blocking findings. **Current next action:** track Workspace consumption under the separate devflow-owned #869 Issue; keep unintegrated sections and all execution authority explicitly unknown/unavailable until validated consumer work is separately accepted.
 
 ## 2026-10-26 chat Claim actor-bound release — merged, acceptance in progress
 
@@ -626,3 +626,4 @@ Stage D acceptance does not prove real Claude/OIDC provider-backed E2E. Human re
 Controller-first GitHub Actions auto-launch v1 (#87/#88), Stage 1 work-class runtime propagation (#89/#90), Issue-comment pickup transport (#94/#95/#97/#98), manual expiry self-heal (#101/#102), and reviewer-provenance pickup eligibility (#105/#106) are accepted. The moving accepted-main SHA remains owned by devflow Control #107 rather than this document.
 
 Runtime Issue #3 remains the volatile live claim/lease authority and must be re-read immediately before any runtime consumption or mutation. Stage C and Stage D are accepted on main through `a7044cd4098aa1d8f8f385f7250d626b7b61c41a`; the accepted implementation still does not acquire, refresh, persist or rotate credentials. Human reports the external GitHub App / Claude OIDC identity configuration is complete, but real provider-backed E2E remains separately unaccepted and must not be synthesized or run across its security/environment boundary without the applicable authority. Adoption remains `PILOT` and devflow #188/#105 PARK remains unreleased. The lightweight-work rollout is accepted through the first Stage-3 3/3 cycle, with Stage 4 `NOT_NEEDED`; standing future supply remains governed by devflow #209.
+
