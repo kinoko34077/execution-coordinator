@@ -5,7 +5,7 @@
 - `GPT_LIVENESS_PROJECTION.md` — optional read-only KAEP GPT-response evidence projection, finite freshness and explicit non-authority; F5A–D adapter does not ingest GitHub comments independently.
 
 - `CURRENT_STATE.md` — accepted v0.1 runtime behavior, merged-main verification, operational smoke evidence, known limitations and next action.
-- `pyproject.toml` / Issue #167 — installable, zero-runtime-dependency distribution of the existing read-only snapshot reader; this packages existing code and grants no Claim or execution authority.
+- `pyproject.toml` / Issue #167 / [merged PR #168](https://github.com/kinoko34077/execution-coordinator/pull/168) — accepted installable, zero-runtime-dependency distribution of the existing read-only snapshot reader; this packages existing code and grants no Claim or execution authority (main `00fb0a76268b45d13c0d6fe5598fa961f3298d7d`).
 
 ## Implementation plan
 
