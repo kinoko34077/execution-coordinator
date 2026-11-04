@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kinotch-execution-coordinator"
+version = "0.1.0"
+description = "Read-only and runtime coordination contracts for KiNoTch managed work"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["execution_coordinator*"]

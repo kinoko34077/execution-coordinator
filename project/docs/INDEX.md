@@ -5,6 +5,7 @@
 - `GPT_LIVENESS_PROJECTION.md` — optional read-only KAEP GPT-response evidence projection, finite freshness and explicit non-authority; F5A–D adapter does not ingest GitHub comments independently.
 
 - `CURRENT_STATE.md` — accepted v0.1 runtime behavior, merged-main verification, operational smoke evidence, known limitations and next action.
+- `pyproject.toml` / Issue #167 — installable, zero-runtime-dependency distribution of the existing read-only snapshot reader; this packages existing code and grants no Claim or execution authority.
 
 ## Implementation plan
 
@@ -21,6 +22,7 @@
 - `src/execution_coordinator/engine.py` — pure claim/lease/fencing state transitions.
 - `src/execution_coordinator/snapshot.py` — strict system-Issue snapshot codec with retention-order preservation.
 - `src/execution_coordinator/github_state.py` — GitHub Issue REST state adapter.
+- `src/execution_coordinator/query.py` — existing strict read-only snapshot reader; `get_state_result()` preserves validated source `updated_at` metadata.
 - `src/execution_coordinator/frontier.py` — read-only composition of trusted discovery, runtime state and claimability projections.
 - `src/execution_coordinator/managed_frontier.py` — deterministic read-only enumeration of normal and reconciliation demand from exact managed-repository Control identities.
 - `src/execution_coordinator/ranking.py` — explicit metadata validation, hard dependency/claimability filters, and deterministic read-only frontier ranking.

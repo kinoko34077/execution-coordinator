@@ -21,3 +21,55 @@ jobs:
         run: python -W error -m unittest discover -s tests -v
       - name: Compile check
         run: python -m compileall -q src tests
+      - name: Build and import installed package
+        run: |
+          mkdir -p "$RUNNER_TEMP/coordinator-wheel" "$RUNNER_TEMP/coordinator-install"
+          python -m pip wheel --no-deps --wheel-dir "$RUNNER_TEMP/coordinator-wheel" .
+          python -m pip install --no-deps --no-index \
+            --find-links "$RUNNER_TEMP/coordinator-wheel" \
+            --target "$RUNNER_TEMP/coordinator-install" \
+            kinotch-execution-coordinator
+          cd "$RUNNER_TEMP"
+          PYTHONPATH="$RUNNER_TEMP/coordinator-install" python - <<'PY'
+          from pathlib import Path
+          import os
+
+          import execution_coordinator
+          from execution_coordinator.github_state import GitHubStateStore, IssueBodyRead
+          from execution_coordinator.model import CoordinatorState
+          from execution_coordinator.query import get_state_result
+          from execution_coordinator.snapshot import SnapshotError, render_issue_body
+
+          installed_root = (Path(os.environ["RUNNER_TEMP"]) / "coordinator-install").resolve()
+          assert Path(execution_coordinator.__file__).resolve().is_relative_to(installed_root)
+          assert callable(get_state_result)
+          assert callable(GitHubStateStore)
+
+          updated_at = "2026-11-05T00:00:00Z"
+
+          class Reader:
+              def __init__(self, body):
+                  self.body = body
+                  self.read_count = 0
+
+              def load_body_with_metadata(self):
+                  self.read_count += 1
+                  return IssueBodyRead(body=self.body, updated_at=updated_at)
+
+          valid = Reader(render_issue_body("human text", CoordinatorState.empty()))
+          result = get_state_result(valid)
+          assert result.state == CoordinatorState.empty()
+          assert result.source_updated_at == updated_at
+          assert valid.read_count == 1
+
+          malformed = Reader(
+              "<!-- EXECUTION_COORDINATOR_STATE_V1_BEGIN -->\n{bad json}\n"
+              "<!-- EXECUTION_COORDINATOR_STATE_V1_END -->"
+          )
+          try:
+              get_state_result(malformed)
+          except SnapshotError:
+              pass
+          else:
+              raise AssertionError("installed package accepted a malformed snapshot")
+          PY
