@@ -45,6 +45,10 @@ class WorkflowContractTests(unittest.TestCase):
         self.assertIn('PYTHONPATH="$RUNNER_TEMP/coordinator-install"', text)
         self.assertIn("from execution_coordinator.query import get_state_result", text)
         self.assertIn("from execution_coordinator.github_state import GitHubStateStore", text)
+        self.assertIn("result = get_state_result(valid)", text)
+        self.assertIn("assert result.source_updated_at == updated_at", text)
+        self.assertIn("render_issue_body", text)
+        self.assertIn("except SnapshotError", text)
 
     def test_mutation_workflow_calls_only_the_coordinator_entrypoint(self) -> None:
         text = MUTATION_WORKFLOW.read_text(encoding="utf-8")
