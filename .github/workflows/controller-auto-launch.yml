@@ -257,7 +257,8 @@ jobs:
             --safe-mode
             --strict-mcp-config
             --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
-            --tools ""
+            --disallowedTools "*"
+            --permission-mode plan
             --max-turns 1
             --session-id "${{ steps.claim.outputs.session_id }}"
 
