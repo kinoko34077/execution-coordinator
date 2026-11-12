@@ -1,0 +1,73 @@
+name: Claude Sonnet 5.5 one-off connection probe (2026-11-13)
+on:
+  workflow_dispatch:
+    inputs:
+      approval:
+        description: 'Owner-approved exact one-off connection attempt'
+        type: string
+        required: true
+jobs:
+  probe:
+    if: github.actor == 'kinoko34077' && github.event.inputs.approval == 'approved-once-2026-11-13'
+    runs-on: ubuntu-latest
+    timeout-minutes: 7
+    permissions:
+      contents: read
+      id-token: write
+    concurrency:
+      group: claude-sonnet55-connect-once-20261113
+      cancel-in-progress: false
+    steps:
+      - name: Checkout fixed probe workflow
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Prepare small no-tool challenge
+        shell: bash
+        run: |
+          printf '%s\n' 'This is a one-time connectivity check. Reply with exactly SONNET55_CONNECTION_OK and do not access files, tools, or GitHub.' > "$RUNNER_TEMP/claude-connection-prompt.txt"
+          printf '{"mcpServers":{}}\n' > "$RUNNER_TEMP/claude-connection-empty-mcp.json"
+      - name: Single Claude API exchange via approved WIF
+        id: claude
+        continue-on-error: true
+        uses: anthropics/claude-code-base-action@dd171826d0197ac293cd459b506790de5119f573 # pinned from existing controller
+        with:
+          prompt_file: ${{ runner.temp }}/claude-connection-prompt.txt
+          anthropic_federation_rule_id: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          claude_args: >-
+            --model claude-sonnet-5-5
+            --effort medium
+            --max-turns 1
+            --max-budget-usd 0.25
+            --safe-mode
+            --strict-mcp-config
+            --mcp-config "${{ runner.temp }}/claude-connection-empty-mcp.json"
+            --tools ""
+      - name: Record bounded result
+        if: always()
+        shell: bash
+        env:
+          RESULT: ${{ steps.claude.outputs.conclusion }}
+          EXECUTION_FILE: ${{ steps.claude.outputs.execution_file }}
+          ACTION_OUTCOME: ${{ steps.claude.outcome }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          result = os.environ.get('RESULT', '')
+          outcome = os.environ.get('ACTION_OUTCOME', '')
+          path = os.environ.get('EXECUTION_FILE', '')
+          observed = False
+          if path and Path(path).is_file():
+              observed = 'SONNET55_CONNECTION_OK' in Path(path).read_text(encoding='utf-8', errors='replace')
+          summary = os.environ.get('GITHUB_STEP_SUMMARY')
+          record = f'Action outcome: {outcome}\nClaude conclusion: {result}\nExpected marker observed in model output file: {observed}\n'
+          print(record)
+          if summary:
+              with open(summary, 'a', encoding='utf-8') as out:
+                  out.write('### One-off Sonnet 5.5 medium connection test\n\n' + record.replace('\n', '  \n'))
+          if outcome != 'success' or result != 'success' or not observed:
+              raise SystemExit(1)
+          PY
