@@ -40,6 +40,122 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Temporary owner-only direct WIF and Messages API (single bounded call)
+        if: github.event_name == 'workflow_dispatch' && github.actor == 'kinoko34077'
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          
+          SAFE_ERRORS = frozenset({
+              "invalid_request", "invalid_grant", "authentication_error",
+              "permission_error", "rate_limit_error", "billing_error",
+              "not_found_error", "overloaded_error", "api_error",
+              "insufficient_quota", "NETWORK_ERROR", "INVALID_RESPONSE",
+              "UNKNOWN", "NONE"
+          })
+          
+          def fail(stage, status, kind):
+              status = status if type(status) is int and 100 <= status <= 599 else "UNAVAILABLE"
+              kind = kind if kind in SAFE_ERRORS else "UNKNOWN"
+              print(f"{stage}=FAIL http={status} error_type={kind}", flush=True)
+              raise SystemExit(1)
+          
+          def post_json(url, data, headers=None):
+              payload = json.dumps(data, separators=(",", ":")).encode("utf-8")
+              request = urllib.request.Request(
+                  url, data=payload, method="POST",
+                  headers={"content-type": "application/json", **(headers or {})})
+              try:
+                  with urllib.request.urlopen(request, timeout=18) as response:
+                      result = json.loads(response.read(32768))
+                      return response.status, result
+              except urllib.error.HTTPError as exc:
+                  status = exc.code
+                  try:
+                      result = json.loads(exc.read(8192))
+                      err = result.get("error", {})
+                      kind = err.get("type", "UNKNOWN") if isinstance(err, dict) else "UNKNOWN"
+                  except (ValueError, TypeError):
+                      kind = "UNKNOWN"
+                  return status, {"_safe_error_type": kind}
+              except (urllib.error.URLError, TimeoutError, OSError):
+                  return None, {"_safe_error_type": "NETWORK_ERROR"}
+              except (ValueError, TypeError):
+                  return None, {"_safe_error_type": "INVALID_RESPONSE"}
+          
+          def request_oidc():
+              uri = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+              bearer = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+              if not uri or not bearer:
+                  fail("GITHUB_OIDC", None, "UNKNOWN")
+              separator = "&" if "?" in uri else "?"
+              uri = uri + separator + "audience=" + urllib.parse.quote(
+                  "https://api.anthropic.com", safe="")
+              try:
+                  req = urllib.request.Request(
+                      uri, headers={"Authorization": "Bearer " + bearer})
+                  with urllib.request.urlopen(req, timeout=12) as response:
+                      token = json.loads(response.read(32768)).get("value", "")
+                  if not isinstance(token, str) or token.count(".") != 2:
+                      fail("GITHUB_OIDC", None, "INVALID_RESPONSE")
+              except urllib.error.HTTPError as exc:
+                  fail("GITHUB_OIDC", exc.code, "UNKNOWN")
+              except (urllib.error.URLError, TimeoutError, OSError, ValueError, TypeError):
+                  fail("GITHUB_OIDC", None, "UNKNOWN")
+              print("GITHUB_OIDC=PASS", flush=True)
+              return token
+          
+          jwt = request_oidc()
+          body = {
+              "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              "assertion": jwt,
+              "federation_rule_id": os.environ.get("ANTHROPIC_FEDERATION_RULE_ID", ""),
+              "organization_id": os.environ.get("ANTHROPIC_ORGANIZATION_ID", ""),
+              "service_account_id": os.environ.get("ANTHROPIC_SERVICE_ACCOUNT_ID", ""),
+          }
+          workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID", "")
+          if workspace:
+              body["workspace_id"] = workspace
+          if not all(body.get(key) for key in ("federation_rule_id", "organization_id", "service_account_id")):
+              fail("ANTHROPIC_WIF_EXCHANGE", None, "UNKNOWN")
+          status, exchange = post_json("https://api.anthropic.com/v1/oauth/token", body)
+          if status != 200 or not isinstance(exchange, dict) or not exchange.get("access_token"):
+              fail("ANTHROPIC_WIF_EXCHANGE", status, exchange.get("_safe_error_type", "INVALID_RESPONSE"))
+          token = exchange.pop("access_token")
+          print("ANTHROPIC_WIF_EXCHANGE=PASS http=200", flush=True)
+          
+          status, response = post_json(
+              "https://api.anthropic.com/v1/messages",
+              {
+                  "model": "claude-sonnet-5-5",
+                  "max_tokens": 64,
+                  "output_config": {"effort": "medium"},
+                  "messages": [{"role": "user", "content": "Connection check. Reply with exactly CONNECTED_OK."}]
+              },
+              {
+                  "authorization": "Bearer " + token,
+                  "anthropic-version": "2023-06-01",
+              }
+          )
+          if status != 200 or not isinstance(response, dict) or response.get("type") != "message":
+              fail("DIRECT_MESSAGES", status, response.get("_safe_error_type", "INVALID_RESPONSE"))
+          texts = [item.get("text", "") for item in response.get("content", [])
+                   if isinstance(item, dict) and item.get("type") == "text"]
+          match = "CONNECTED_OK" in "".join(texts)
+          usage = response.get("usage") or {}
+          used = bool(isinstance(usage, dict) and
+                      (usage.get("input_tokens", 0) or usage.get("output_tokens", 0)))
+          print(f"DIRECT_MESSAGES=PASS http=200 model_reply_marker={str(match).lower()} usage_present={str(used).lower()}", flush=True)
+          P
       - name: Expire stale runtime claims
         env:
           GITHUB_TOKEN: ${{ github.token }}
