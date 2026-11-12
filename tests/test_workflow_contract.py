@@ -195,7 +195,9 @@ class WorkflowContractTests(unittest.TestCase):
         bootstrap_block = text[bootstrap:reconcile]
         self.assertIn("--safe-mode", bootstrap_block)
         self.assertNotIn("--bare", bootstrap_block)
-        self.assertIn('--tools ""', bootstrap_block)
+        self.assertIn('--disallowedTools "*"', bootstrap_block)
+        self.assertIn('--permission-mode plan', bootstrap_block)
+        self.assertNotIn('--tools ""', bootstrap_block)
         self.assertIn("--max-turns 1", bootstrap_block)
         self.assertIn("--session-id", bootstrap_block)
 
