@@ -40,6 +40,76 @@ jobs:
         with:
           python-version: '3.11'
 
+      - name: Temporary direct-human WIF exchange from controller workflow (no model)
+        if: github.event_name == 'workflow_dispatch' && github.actor == 'kinoko34077'
+        env:
+          ANTHROPIC_FEDERATION_RULE_ID: ${{ vars.ANTHROPIC_FEDERATION_RULE_ID }}
+          ANTHROPIC_ORGANIZATION_ID: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
+          ANTHROPIC_SERVICE_ACCOUNT_ID: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
+          ANTHROPIC_WORKSPACE_ID: ${{ vars.ANTHROPIC_WORKSPACE_ID }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+          
+          ALLOWED = {"authentication_error", "invalid_request_error", "invalid_grant", "UNKNOWN"}
+          def error(stage, code, kind):
+              status = code if type(code) is int and 100 <= code <= 599 else "UNAVAILABLE"
+              kind = kind if kind in ALLOWED else "UNKNOWN"
+              print(f"{stage}=FAIL http={status} type={kind}")
+              raise SystemExit(1)
+          
+          address = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+          secret = os.environ.get("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+          if not address or not secret:
+              error("OIDC", None, "UNKNOWN")
+          target = address + "&audience=" + urllib.parse.quote("https://api.anthropic.com", safe="")
+          try:
+              req = urllib.request.Request(target, headers={"Authorization": "Bearer " + secret})
+              with urllib.request.urlopen(req, timeout=12) as conn:
+                  assertion = json.loads(conn.read(32000)).get("value", "")
+              if not isinstance(assertion, str) or assertion.count(".") != 2:
+                  error("OIDC", None, "UNKNOWN")
+          except urllib.error.HTTPError as ex:
+              error("OIDC", ex.code, "UNKNOWN")
+          except (OSError, ValueError, TypeError):
+              error("OIDC", None, "UNKNOWN")
+          print("OIDC=PASS", flush=True)
+          
+          body = {
+              "grant_type": "urn:ietf:params:oauth:grant-type:jwt-bearer",
+              "assertion": assertion,
+              "federation_rule_id": os.environ.get("ANTHROPIC_FEDERATION_RULE_ID", ""),
+              "organization_id": os.environ.get("ANTHROPIC_ORGANIZATION_ID", ""),
+              "service_account_id": os.environ.get("ANTHROPIC_SERVICE_ACCOUNT_ID", ""),
+          }
+          workspace = os.environ.get("ANTHROPIC_WORKSPACE_ID", "")
+          if workspace:
+              body["workspace_id"] = workspace
+          if not all(body[k] for k in ("federation_rule_id", "organization_id", "service_account_id")):
+              error("WIF", None, "UNKNOWN")
+          payload = json.dumps(body, separators=(",", ":")).encode("utf-8")
+          request = urllib.request.Request("https://api.anthropic.com/v1/oauth/token",
+              data=payload, method="POST", headers={"content-type": "application/json"})
+          try:
+              with urllib.request.urlopen(request, timeout=15) as conn:
+                  result = json.loads(conn.read(8000))
+              if not isinstance(result.get("access_token"), str):
+                  error("WIF", None, "UNKNOWN")
+          except urllib.error.HTTPError as ex:
+              try:
+                  data = json.loads(ex.read(8000))
+                  kind = data.get("error", {}).get("type", "UNKNOWN")
+              except (ValueError, TypeError, AttributeError):
+                  kind = "UNKNOWN"
+              error("WIF", ex.code, kind)
+          except (OSError, ValueError, TypeError, AttributeError):
+              error("WIF", None, "UNKNOWN")
+          print("WIF=PASS http=200", flush=True)
+          PY
       - name: Expire stale runtime claims
         env:
           GITHUB_TOKEN: ${{ github.token }}
