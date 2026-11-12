@@ -23,10 +23,11 @@ jobs:
       PYTHONPATH: src
       CONTEXT_DIR: .controller-auto-launch
       TARGET_DIR: target
-      # Fee-bearing Provider use is frozen. Never infer permission from OIDC,
-      # configured secrets, a READY task, or a manual workflow_dispatch.
-      # Changing this literal requires a separate explicit user policy change,
-      # code review and a source-bound operational safety check.
+      # Fee-bearing Claude execution requires fresh, direct human approval
+      # for the exact operation and verified billing/safety. No permission is
+      # inferred from OIDC, model choice, READY tasks, schedule or dispatch.
+      # Keep the default denied; separately review any scoped activation.
+      # Never turn the 15-minute schedule into unattended paid execution.
       PAID_PROVIDER_ADMISSION: denied
     steps:
       - name: Checkout execution coordinator
@@ -251,6 +252,8 @@ jobs:
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           claude_args: >-
+            --model claude-sonnet-5-5
+            --effort medium
             --safe-mode
             --strict-mcp-config
             --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
@@ -329,6 +332,8 @@ jobs:
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           claude_args: >-
+            --model claude-sonnet-5-5
+            --effort medium
             --safe-mode
             --strict-mcp-config
             --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
@@ -351,6 +356,8 @@ jobs:
           anthropic_organization_id: ${{ vars.ANTHROPIC_ORGANIZATION_ID }}
           anthropic_service_account_id: ${{ vars.ANTHROPIC_SERVICE_ACCOUNT_ID }}
           claude_args: >-
+            --model claude-sonnet-5-5
+            --effort medium
             --safe-mode
             --strict-mcp-config
             --mcp-config "${{ github.workspace }}/.controller-auto-launch/empty-mcp.json"
