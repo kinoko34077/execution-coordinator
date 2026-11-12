@@ -44,7 +44,8 @@ jobs:
             --safe-mode
             --strict-mcp-config
             --mcp-config "${{ runner.temp }}/claude-connection-empty-mcp.json"
-            --tools ""
+            --disallowedTools "*"
+            --permission-mode plan
       - name: Record bounded result
         if: always()
         shell: bash
