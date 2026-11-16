@@ -48,7 +48,8 @@ def _doc(repository, number, body, *, title="Task", association="OWNER", state="
 
 
 def _control(*, roles=("implementer",), status="READY_FOR_IMPLEMENTATION", next_action="`[IMPLEMENT] pilot`",
-             work_status="AUDITED", task_body=TASK_BODY, repository_state="ACTIVE", association="OWNER"):
+             work_status="AUDITED", task_body=TASK_BODY, repository_state="ACTIVE", association="OWNER",
+             pickup_scope=None):
     tags = {"implementer": "IMPLEMENT", "reviewer": "REVIEW"}
     envelope = {
         "task": "owner/repo#8",
@@ -65,8 +66,9 @@ def _control(*, roles=("implementer",), status="READY_FOR_IMPLEMENTATION", next_
         "## Repository\n\n`owner/repo`\n\n"
         f"## Work Status\n\n`{work_status}`\n\n"
         f"## Repository State\n\n`{repository_state}`\n\n"
-        f"## Next Action\n\n{next_action}\n\n"
-        f"{MARK_BEGIN}\n{json.dumps(projection)}\n{MARK_END}\n"
+        + (f"## Pickup External Block Scope\n\n`{pickup_scope}`\n\n" if pickup_scope is not None else "")
+        + f"## Next Action\n\n{next_action}\n\n"
+        + f"{MARK_BEGIN}\n{json.dumps(projection)}\n{MARK_END}\n"
     )
     return _doc("kinoko34077/devflow", 107, body, title="[REPO] repo", association=association)
 
@@ -228,6 +230,104 @@ class GatherEvidenceTests(unittest.TestCase):
         self.assertTrue(control_summary(_control(work_status="BLOCKED"))["external_blocker"])
         self.assertFalse(control_summary(_control(association="NONE"))["trusted"])
         self.assertEqual("PARKED", control_summary(_control(repository_state="PARKED"))["repository_state"])
+
+    def test_control_blocked_default_requires_explicit_scope(self):
+        self.assertTrue(control_summary(_control(work_status="BLOCKED"))["external_blocker"])
+        for value in ("", "UNRECOGNIZED", "CANDIDATE_SCOPED_SUFFIX"):
+            self.assertTrue(
+                control_summary(_control(work_status="BLOCKED", pickup_scope=value))["external_blocker"]
+            )
+        # Duplicate declaration must not authorize scoped admission.
+        dup = "CANDIDATE_SCOPED`\n\n## Pickup External Block Scope\n\n`CANDIDATE_SCOPED"
+        self.assertTrue(control_summary(_control(work_status="BLOCKED", pickup_scope=dup))["external_blocker"])
+        for value in ("candidate_scoped", "CANDIDATE_scoped", "CANDIDATE_SCOPED\\nother value"):
+            self.assertTrue(
+                control_summary(_control(work_status="BLOCKED", pickup_scope=value))["external_blocker"]
+            )
+        # A candidate-scope example inside a fenced code block must not act
+        # as an authorization. The added ## Example End heading deliberately
+        # makes the naive section parser return exactly CANDIDATE_SCOPED.
+        source = _control(work_status="BLOCKED")
+        fenced = source.body.replace(
+            "## Next Action\n\n",
+            "## Next Action\n\n```markdown\n## Pickup External Block Scope\n\n"
+            "`CANDIDATE_SCOPED`\n## Example End\n```\n\n",
+        )
+        self.assertNotEqual(fenced, source.body)
+        fenced_doc = _doc("kinoko34077/devflow", 107, fenced, title="[REPO] repo")
+        self.assertTrue(control_summary(fenced_doc)["external_blocker"])
+        # These are genuine source replacements: code-fence variants must
+        # not turn the visually displayed sample into a Control permission.
+        for opening, closing, middle in (
+            ("```markdown", "```", ""),
+            ("~~~markdown", "~~~", ""),
+            ("````markdown", "````", "```not-a-valid-closing-line\n"),
+        ):
+            with self.subTest(opening=opening):
+                spoof = source.body.replace(
+                    "## Next Action\n\n",
+                    "## Next Action\n\n" + opening + "\n" + middle
+                    + "## Pickup External Block Scope\n\n`CANDIDATE_SCOPED`\n"
+                    + "## Example End\n" + closing + "\n\n",
+                )
+                self.assertNotEqual(spoof, source.body)
+                self.assertTrue(
+                    control_summary(_doc("kinoko34077/devflow", 107, spoof, title="[REPO] repo"))["external_blocker"]
+                )
+
+    def test_fenced_decoy_and_real_heading_fail_closed_on_duplicate(self):
+        for real_value in ("UNRECOGNIZED", "CANDIDATE_SCOPED"):
+            with self.subTest(real_value=real_value):
+                original = _control(work_status="BLOCKED", pickup_scope=real_value)
+                decoy = ("```markdown\n"
+                         "## Pickup External Block Scope\n\n"
+                         "`CANDIDATE_SCOPED`\n## Example End\n```\n\n")
+                changed = original.body.replace("## Pickup External Block Scope\n\n",
+                                                decoy + "## Pickup External Block Scope\n\n")
+                self.assertNotEqual(changed, original.body)
+                # _sections sees both headings and refuses ambiguous values,
+                # even when exactly one of the headings is not fenced.
+                doc = _doc("kinoko34077/devflow", 107, changed, title="[REPO] repo")
+                self.assertTrue(control_summary(doc)["external_blocker"])
+
+    def test_html_comment_scope_example_is_not_authority(self):
+        original = _control(work_status="BLOCKED")
+        example = ("<!--\n## Pickup External Block Scope\n\n"
+                   "`CANDIDATE_SCOPED`\n## Example End\n-->\n\n")
+        changed = original.body.replace("## Next Action\n\n", "## Next Action\n\n" + example)
+        self.assertNotEqual(changed, original.body)
+        doc = _doc("kinoko34077/devflow", 107, changed, title="[REPO] repo")
+        self.assertTrue(control_summary(doc)["external_blocker"])
+    def test_candidate_scope_requires_trusted_control_authority(self):
+        other = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED", association="NONE")
+        self.assertFalse(control_summary(other)["trusted"])
+        self.assertTrue(control_summary(other)["external_blocker"])
+        valid = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED")
+        wrong_title = _doc("kinoko34077/devflow", 107, valid.body, title="[REPO] another")
+        self.assertFalse(control_summary(wrong_title)["trusted"])
+        self.assertTrue(control_summary(wrong_title)["external_blocker"])
+        self.assertFalse(control_summary(_control(work_status="AUDITED", pickup_scope="CANDIDATE_SCOPED"))["external_blocker"])
+
+    def test_explicit_scoped_block_does_not_override_candidate_or_human_gates(self):
+        control = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED")
+        self.assertFalse(control_summary(control)["external_blocker"])
+        evidence, _ = _gather(control)
+        [candidate] = evidence["frontier"]["candidates"]
+        self.assertEqual("CLAIMABLE", candidate["claimability"])
+        self.assertFalse(candidate["external_blocker"])
+        human_control = _control(
+            work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED",
+            next_action="`[HUMAN_GATE] approval needed`",
+        )
+        self.assertTrue(control_summary(human_control)["human_gate"])
+        blocked = _doc(
+            "kinoko34077/devflow", 107,
+            control.body.replace('"blocked": false', '"blocked": true'),
+            title="[REPO] repo",
+        )
+        blocked_evidence, _ = _gather(blocked)
+        [blocked_candidate] = blocked_evidence["frontier"]["candidates"]
+        self.assertTrue(blocked_candidate["external_blocker"])
 
     def test_stale_digest_leaves_frontier_incomplete(self):
         evidence, candidates = _gather(_control(task_body="old body"), task_body=TASK_BODY)
