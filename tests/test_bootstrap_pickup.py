@@ -275,6 +275,29 @@ class GatherEvidenceTests(unittest.TestCase):
                     control_summary(_doc("kinoko34077/devflow", 107, spoof, title="[REPO] repo"))["external_blocker"]
                 )
 
+    def test_fenced_decoy_and_real_heading_fail_closed_on_duplicate(self):
+        for real_value in ("UNRECOGNIZED", "CANDIDATE_SCOPED"):
+            with self.subTest(real_value=real_value):
+                original = _control(work_status="BLOCKED", pickup_scope=real_value)
+                decoy = ("```markdown\n"
+                         "## Pickup External Block Scope\n\n"
+                         "`CANDIDATE_SCOPED`\n## Example End\n```\n\n")
+                changed = original.body.replace("## Pickup External Block Scope\n\n",
+                                                decoy + "## Pickup External Block Scope\n\n")
+                self.assertNotEqual(changed, original.body)
+                # _sections sees both headings and refuses ambiguous values,
+                # even when exactly one of the headings is not fenced.
+                doc = _doc("kinoko34077/devflow", 107, changed, title="[REPO] repo")
+                self.assertTrue(control_summary(doc)["external_blocker"])
+
+    def test_html_comment_scope_example_is_not_authority(self):
+        original = _control(work_status="BLOCKED")
+        example = ("<!--\n## Pickup External Block Scope\n\n"
+                   "`CANDIDATE_SCOPED`\n## Example End\n-->\n\n")
+        changed = original.body.replace("## Next Action\n\n", "## Next Action\n\n" + example)
+        self.assertNotEqual(changed, original.body)
+        doc = _doc("kinoko34077/devflow", 107, changed, title="[REPO] repo")
+        self.assertTrue(control_summary(doc)["external_blocker"])
     def test_candidate_scope_requires_trusted_control_authority(self):
         other = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED", association="NONE")
         self.assertFalse(control_summary(other)["trusted"])
