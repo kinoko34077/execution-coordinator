@@ -249,12 +249,31 @@ class GatherEvidenceTests(unittest.TestCase):
         # makes the naive section parser return exactly CANDIDATE_SCOPED.
         source = _control(work_status="BLOCKED")
         fenced = source.body.replace(
-            "## Next Action\\n\\n",
-            "## Next Action\\n\\n```markdown\\n## Pickup External Block Scope\\n\\n"
-            "`CANDIDATE_SCOPED`\\n## Example End\\n```\\n\\n",
+            "## Next Action\n\n",
+            "## Next Action\n\n```markdown\n## Pickup External Block Scope\n\n"
+            "`CANDIDATE_SCOPED`\n## Example End\n```\n\n",
         )
+        self.assertNotEqual(fenced, source.body)
         fenced_doc = _doc("kinoko34077/devflow", 107, fenced, title="[REPO] repo")
         self.assertTrue(control_summary(fenced_doc)["external_blocker"])
+        # These are genuine source replacements: code-fence variants must
+        # not turn the visually displayed sample into a Control permission.
+        for opening, closing, middle in (
+            ("```markdown", "```", ""),
+            ("~~~markdown", "~~~", ""),
+            ("````markdown", "````", "```not-a-valid-closing-line\\n"),
+        ):
+            with self.subTest(opening=opening):
+                spoof = source.body.replace(
+                    "## Next Action\\n\\n",
+                    "## Next Action\\n\\n" + opening + "\\n" + middle
+                    + "## Pickup External Block Scope\\n\\n`CANDIDATE_SCOPED`\\n"
+                    + "## Example End\\n" + closing + "\\n\\n",
+                )
+                self.assertNotEqual(spoof, source.body)
+                self.assertTrue(
+                    control_summary(_doc("kinoko34077/devflow", 107, spoof, title="[REPO] repo"))["external_blocker"]
+                )
 
     def test_candidate_scope_requires_trusted_control_authority(self):
         other = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED", association="NONE")
