@@ -240,6 +240,31 @@ class GatherEvidenceTests(unittest.TestCase):
         # Duplicate declaration must not authorize scoped admission.
         dup = "CANDIDATE_SCOPED`\n\n## Pickup External Block Scope\n\n`CANDIDATE_SCOPED"
         self.assertTrue(control_summary(_control(work_status="BLOCKED", pickup_scope=dup))["external_blocker"])
+        for value in ("candidate_scoped", "CANDIDATE_scoped", "CANDIDATE_SCOPED\\nother value"):
+            self.assertTrue(
+                control_summary(_control(work_status="BLOCKED", pickup_scope=value))["external_blocker"]
+            )
+        # A candidate-scope example inside a fenced code block must not act
+        # as an authorization. The added ## Example End heading deliberately
+        # makes the naive section parser return exactly CANDIDATE_SCOPED.
+        source = _control(work_status="BLOCKED")
+        fenced = source.body.replace(
+            "## Next Action\\n\\n",
+            "## Next Action\\n\\n```markdown\\n## Pickup External Block Scope\\n\\n"
+            "`CANDIDATE_SCOPED`\\n## Example End\\n```\\n\\n",
+        )
+        fenced_doc = _doc("kinoko34077/devflow", 107, fenced, title="[REPO] repo")
+        self.assertTrue(control_summary(fenced_doc)["external_blocker"])
+
+    def test_candidate_scope_requires_trusted_control_authority(self):
+        other = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED", association="NONE")
+        self.assertFalse(control_summary(other)["trusted"])
+        self.assertTrue(control_summary(other)["external_blocker"])
+        valid = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED")
+        wrong_title = _doc("kinoko34077/devflow", 107, valid.body, title="[REPO] another")
+        self.assertFalse(control_summary(wrong_title)["trusted"])
+        self.assertTrue(control_summary(wrong_title)["external_blocker"])
+        self.assertFalse(control_summary(_control(work_status="AUDITED", pickup_scope="CANDIDATE_SCOPED"))["external_blocker"])
 
     def test_explicit_scoped_block_does_not_override_candidate_or_human_gates(self):
         control = _control(work_status="BLOCKED", pickup_scope="CANDIDATE_SCOPED")
