@@ -73,6 +73,28 @@ def _utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _has_unfenced_pickup_scope_heading(body: str) -> bool:
+    """Require a real top-level heading; fenced examples are not opt-ins."""
+
+    fence_char: str | None = None
+    fence_width = 0
+    count = 0
+    for line in body.splitlines():
+        stripped = line.lstrip()
+        char = stripped[:1]
+        if char in ("`", "~"):
+            width = len(stripped) - len(stripped.lstrip(char))
+            if width >= 3:
+                if fence_char is None:
+                    fence_char, fence_width = char, width
+                elif char == fence_char and width >= fence_width:
+                    fence_char, fence_width = None, 0
+                continue
+        if fence_char is None and line.strip().casefold() == "## pickup external block scope":
+            count += 1
+    return count == 1
+
+
 def control_summary(document: IssueDocument) -> dict[str, Any]:
     """Project one devflow Control into bootstrap evidence (no authority added)."""
 
@@ -92,15 +114,23 @@ def control_summary(document: IssueDocument) -> dict[str, Any]:
     # external-wait decisions to validated published-candidate gates. Missing,
     # duplicated, or unknown declarations stay on the legacy fail-closed path.
     pickup_scope = _strip_code_value(section("pickup external block scope")).strip()
+    trusted = (
+        document.author_association in TRUSTED_AUTHOR_ASSOCIATIONS
+        and document.title.strip() == f"[REPO] {repository.split('/', 1)[-1]}"
+    )
+    scoped_external_wait = (
+        trusted
+        and pickup_scope == "CANDIDATE_SCOPED"
+        and _has_unfenced_pickup_scope_heading(document.body)
+    )
     return {
         "ref": f"{document.repository}#{document.number}",
         "managed_repository": repository,
         "state": "open" if document.state.casefold() == "open" and not document.is_pull_request else "closed",
-        "trusted": document.author_association in TRUSTED_AUTHOR_ASSOCIATIONS
-        and document.title.strip() == f"[REPO] {repository.split('/', 1)[-1]}",
+        "trusted": trusted,
         "repository_state": state,
         "human_gate": any(token in next_action for token in _HUMAN_TOKENS),
-        "external_blocker": work_status == "BLOCKED" and pickup_scope != "CANDIDATE_SCOPED",
+        "external_blocker": work_status == "BLOCKED" and not scoped_external_wait,
     }
 
 
