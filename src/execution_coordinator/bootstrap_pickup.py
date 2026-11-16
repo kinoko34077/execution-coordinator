@@ -78,8 +78,13 @@ def _has_unfenced_pickup_scope_heading(body: str) -> bool:
 
     fence_char: str | None = None
     fence_width = 0
+    in_comment = False
     count = 0
     for line in body.splitlines():
+        if in_comment:
+            if "-->" in line:
+                in_comment = False
+            continue
         stripped = line.lstrip()
         indent = len(line) - len(stripped)
         char = stripped[:1]
@@ -92,7 +97,13 @@ def _has_unfenced_pickup_scope_heading(body: str) -> bool:
                 elif char == fence_char and width >= fence_width and not stripped[width:].strip():
                     fence_char, fence_width = None, 0
                 continue
-        if fence_char is None and line.startswith("## ") and line.strip().casefold() == "## pickup external block scope":
+        if fence_char is not None:
+            continue
+        if "<!--" in line:
+            # A Markdown/HTML example comment is not a Control opt-in.
+            in_comment = "-->" not in line.split("<!--", 1)[1]
+            continue
+        if line.startswith("## ") and line.strip().casefold() == "## pickup external block scope":
             count += 1
     return count == 1
 
@@ -103,6 +114,8 @@ def control_summary(document: IssueDocument) -> dict[str, Any]:
 
     def section(name: str) -> str:
         # A duplicated section is ambiguous and therefore treated as absent.
+        # This binds the value to the unique heading: a fenced decoy plus
+        # an actual scope heading is rejected, never interpreted by order.
         values = sections.get(name, [])
         return values[0] if len(values) == 1 else ""
 
