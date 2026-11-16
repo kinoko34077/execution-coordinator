@@ -233,12 +233,12 @@ class GatherEvidenceTests(unittest.TestCase):
 
     def test_control_blocked_default_requires_explicit_scope(self):
         self.assertTrue(control_summary(_control(work_status="BLOCKED"))["external_blocker"])
-        for value in ("", "UNRECOGNIZED", "CANDIDATE_SCOPED "):
+        for value in ("", "UNRECOGNIZED", "CANDIDATE_SCOPED_SUFFIX"):
             self.assertTrue(
                 control_summary(_control(work_status="BLOCKED", pickup_scope=value))["external_blocker"]
             )
         # Duplicate declaration must not authorize scoped admission.
-        dup = "CANDIDATE_SCOPED`\\n\\n## Pickup External Block Scope\\n\\n`CANDIDATE_SCOPED"
+        dup = "CANDIDATE_SCOPED`\n\n## Pickup External Block Scope\n\n`CANDIDATE_SCOPED"
         self.assertTrue(control_summary(_control(work_status="BLOCKED", pickup_scope=dup))["external_blocker"])
 
     def test_explicit_scoped_block_does_not_override_candidate_or_human_gates(self):
