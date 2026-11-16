@@ -87,6 +87,11 @@ def control_summary(document: IssueDocument) -> dict[str, Any]:
     state = _strip_code_value(section("repository state")).strip()
     work_status = _strip_code_value(section("work status")).strip()
     next_action = section("next action")
+    # A BLOCKED repository summary is still a global pickup stop by default.
+    # An explicit, trusted Control-owned scope declaration may delegate only
+    # external-wait decisions to validated published-candidate gates. Missing,
+    # duplicated, or unknown declarations stay on the legacy fail-closed path.
+    pickup_scope = _strip_code_value(section("pickup external block scope")).strip()
     return {
         "ref": f"{document.repository}#{document.number}",
         "managed_repository": repository,
@@ -95,7 +100,7 @@ def control_summary(document: IssueDocument) -> dict[str, Any]:
         and document.title.strip() == f"[REPO] {repository.split('/', 1)[-1]}",
         "repository_state": state,
         "human_gate": any(token in next_action for token in _HUMAN_TOKENS),
-        "external_blocker": work_status == "BLOCKED",
+        "external_blocker": work_status == "BLOCKED" and pickup_scope != "CANDIDATE_SCOPED",
     }
 
 
