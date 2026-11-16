@@ -66,8 +66,8 @@ def _control(*, roles=("implementer",), status="READY_FOR_IMPLEMENTATION", next_
         "## Repository\n\n`owner/repo`\n\n"
         f"## Work Status\n\n`{work_status}`\n\n"
         f"## Repository State\n\n`{repository_state}`\n\n"
-        f"## Next Action\n\n{next_action}\n\n"
         + (f"## Pickup External Block Scope\n\n`{pickup_scope}`\n\n" if pickup_scope is not None else "")
+        + f"## Next Action\n\n{next_action}\n\n"
         + f"{MARK_BEGIN}\n{json.dumps(projection)}\n{MARK_END}\n"
     )
     return _doc("kinoko34077/devflow", 107, body, title="[REPO] repo", association=association)
