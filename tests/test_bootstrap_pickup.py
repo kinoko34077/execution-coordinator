@@ -261,14 +261,14 @@ class GatherEvidenceTests(unittest.TestCase):
         for opening, closing, middle in (
             ("```markdown", "```", ""),
             ("~~~markdown", "~~~", ""),
-            ("````markdown", "````", "```not-a-valid-closing-line\\n"),
+            ("````markdown", "````", "```not-a-valid-closing-line\n"),
         ):
             with self.subTest(opening=opening):
                 spoof = source.body.replace(
-                    "## Next Action\\n\\n",
-                    "## Next Action\\n\\n" + opening + "\\n" + middle
-                    + "## Pickup External Block Scope\\n\\n`CANDIDATE_SCOPED`\\n"
-                    + "## Example End\\n" + closing + "\\n\\n",
+                    "## Next Action\n\n",
+                    "## Next Action\n\n" + opening + "\n" + middle
+                    + "## Pickup External Block Scope\n\n`CANDIDATE_SCOPED`\n"
+                    + "## Example End\n" + closing + "\n\n",
                 )
                 self.assertNotEqual(spoof, source.body)
                 self.assertTrue(
