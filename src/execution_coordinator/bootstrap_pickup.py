@@ -74,26 +74,27 @@ def _utc(value: datetime) -> str:
 
 
 def _has_unfenced_pickup_scope_heading(body: str) -> bool:
-    """Require a real top-level heading; fenced examples are not opt-ins."""
+    """Require one real top-level heading; fenced examples are not opt-ins."""
 
     fence_char: str | None = None
     fence_width = 0
     count = 0
     for line in body.splitlines():
         stripped = line.lstrip()
+        indent = len(line) - len(stripped)
         char = stripped[:1]
-        if char in ("`", "~"):
+        if indent <= 3 and char in ("`", "~"):
             width = len(stripped) - len(stripped.lstrip(char))
             if width >= 3:
                 if fence_char is None:
-                    fence_char, fence_width = char, width
-                elif char == fence_char and width >= fence_width:
+                    if char != "`" or "`" not in stripped[width:]:
+                        fence_char, fence_width = char, width
+                elif char == fence_char and width >= fence_width and not stripped[width:].strip():
                     fence_char, fence_width = None, 0
                 continue
-        if fence_char is None and line.strip().casefold() == "## pickup external block scope":
+        if fence_char is None and line.startswith("## ") and line.strip().casefold() == "## pickup external block scope":
             count += 1
     return count == 1
-
 
 def control_summary(document: IssueDocument) -> dict[str, Any]:
     """Project one devflow Control into bootstrap evidence (no authority added)."""
