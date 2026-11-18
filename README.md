@@ -107,7 +107,7 @@ The callback is not entered unless both claim and `acknowledge` succeed. `AgentS
 
 The Issue #10 follow-up extends the same adapter over existing runtime operations with `progress`, evidence-backed `wait`, explicit `resume`, and terminal `fail`. It validates live execution state and terminal claim removal before updating local authority. Callback exceptions remain primary while release cleanup failures are attached as notes.
 
-This adapter is deliberately not a scheduler, controller, repo-monitor, or full Protocol v1 expected-state/failure-evidence implementation.
+This adapter is deliberately not a scheduler, controller, repo-monitor, or full Protocol v1 expected-state/failure-evidence implementation. Package/import, protocol, and claim-state regression verification must use the declared Python >=3.11 support range; Python 3.10 is outside that contract and is not a required CI matrix entry. Additional supported Python versions need separate compatibility evidence before making them mandatory checks.
 
 ## Canonical cross-repository references
 
