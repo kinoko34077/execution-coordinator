@@ -1,0 +1,5 @@
+# Shared specification and implementation: https://github.com/kinoko34077/devflow/issues/1088
+# Bootstrap default: LF for portable text; native CRLF for Windows batch scripts.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
